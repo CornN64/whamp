@@ -1,0 +1,22 @@
+At line 13 of file probe20.f90 (unit = 6, file = 'stdout')
+Fortran runtime error: Expected REAL for item 4 in formatted transfer, got INTEGER
+(' E', 2I1, '=', 2(1PE10.2), '  EX', 2I1, '=', 2(1PE10.2), 'EZ', 2I1, '=', 2(1PE
+                     ^
+
+Error termination. Backtrace:
+
+Could not print backtrace: libbacktrace could not find executable to open
+#0  0xffffffff
+#1  0xffffffff
+#2  0xffffffff
+#3  0xffffffff
+#4  0xffffffff
+#5  0xffffffff
+#6  0xffffffff
+#7  0xffffffff
+#8  0xffffffff
+#9  0xffffffff
+#10  0xffffffff
+#11  0xffffffff
+#12  0xffffffff
+#13  0xffffffff
