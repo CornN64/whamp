@@ -1,0 +1,29 @@
+# PLASMA FREQ.:     8.9809KHZ GYRO FREQ.:    0.0090KHZ   ELECTRON DENSITY:1.00000E+06M-3
+# e-   DN= 1.00000E+06  T=  0.01000  D=1.00  A=1.00  B=0.00 VD= 0.00
+# H+   DN= 1.00000E+06  T=  0.00100  D=1.00  A=1.00  B=0.00 VD= 0.00
+#INPUT:
+
+#OUTPUT:
+
+  NO CONVERGENCE!
+  KP= 0.000  KZ=0.0010  X=    0.33E+03    0.32E-05
+  I= 51  IRK=  1
+
+
+  NO CONVERGENCE!
+  KP= 0.010  KZ=0.0000  X=         NaN         NaN
+  I=  1  IRK=  1
+
+  TOO HEAVILY DAMPED!
+
+    0.0100000      0.0000000              NaN       NaN   EX= 0.0000  0.0000  EY= 0.0000  0.0000  EZ= 0.0000  0.0000
+
+  NO CONVERGENCE!
+  KP= 0.020  KZ=0.0000  X=         NaN         NaN
+  I=  1  IRK=  1
+
+  TOO HEAVILY DAMPED!
+
+    0.0200000      0.0000000              NaN       NaN   EX= 0.0000  0.0000  EY= 0.0000  0.0000  EZ= 0.0000  0.0000
+
+#INPUT:
