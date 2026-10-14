@@ -159,9 +159,6 @@ while true
         if pointDiag.rescued
             diag.rescued = diag.rescued + 1;
         end
-        diag.rejected = diag.rejected + pointDiag.rejected;
-        diag.clampedSteps = diag.clampedSteps + pointDiag.clamped;
-        diag.attemptsPerPoint(end+1) = pointDiag.attempts; %#ok<AGROW>
         history(end+1) = solution.X; %#ok<AGROW>
         sweep = whampkit.remember_point(sweep, solution);
     elseif status == 2
@@ -169,6 +166,14 @@ while true
     else
         flagNoConvergence(ip, iz) = 1;
     end
+
+    % Effort counters accumulate on *every* visited point, not only the ones
+    % that succeeded.  The points that failed are precisely where the seed
+    % list was worked hardest, so counting only successes makes the
+    % diagnostics report the easy cases and hide the interesting ones.
+    diag.rejected = diag.rejected + pointDiag.rejected;
+    diag.clampedSteps = diag.clampedSteps + pointDiag.clamped;
+    diag.attemptsPerPoint(end+1) = pointDiag.attempts; %#ok<AGROW>
 
     perPoint{end+1} = local_packPoint(ip, iz, sweep.p, sweep.z, x, ...
         status, pointDiag); %#ok<AGROW>
@@ -261,6 +266,14 @@ seeds = local_seedList(xseed, xPrev, scale, opt);
 
 solution = [];
 status = 0;
+% The status of the engine's own seed, kept so the point can be reported with
+% WHAMP's own semantics.  "Too heavily damped" is a physical statement about
+% the plasma and "did not converge" is a numerical one about the iteration;
+% the multi-start loop would otherwise flatten the first into the second and
+% Output.flagTooHeavilyDamped would never be set.  The engine seed is the
+% right one to ask, because it is exactly the solve WHAMP would have done had
+% it been on this branch.
+engineStatus = 0;
 for s = 1:numel(seeds)
     if ~isfinite(seeds(s)) || seeds(s) <= 0
         continue
@@ -277,6 +290,9 @@ for s = 1:numel(seeds)
     pointDiag.tried{end+1} = struct('seed',seeds(s),'status',st, ...
         'root',local_safeRoot(sol),'displacement',info.displacement); %#ok<AGROW>
 
+    if s == 1
+        engineStatus = st;
+    end
     if st ~= 1
         continue
     end
@@ -298,14 +314,20 @@ for s = 1:numel(seeds)
     end
 end
 
-% If nothing converged there is nothing to record.  Note there is no point in
-% a further "just do what WHAMP does" fallback: the first seed above already
-% *is* WHAMP's solve, unconstrained from the same extrapolated seed, so any
-% extra attempt would be a byte-for-byte repeat.  When this routine fails at a
-% point where WHAMP succeeds, it is because the two have already diverged onto
-% different branches -- WHAMP jumped and this solver did not -- and the
-% coverage counts in the comparison are therefore not directly comparable from
-% that point on.
+% Nothing credible was found.  There is no point in a further "just do what
+% WHAMP does" fallback: the first seed above already *is* WHAMP's solve,
+% unconstrained from the same extrapolated seed, so any extra attempt would be
+% a byte-for-byte repeat.  When this routine fails at a point where WHAMP
+% succeeds, the two have already diverged onto different branches -- WHAMP
+% jumped and this solver did not -- and the coverage counts in the comparison
+% are therefore not directly comparable from that point on.
+%
+% Preserve WHAMP's distinction between "too heavily damped" and "did not
+% converge": if the engine's own seed was refused on damping grounds, the
+% point is physically damped, not merely numerically stubborn.
+if engineStatus == 2
+    status = 2;
+end
 end
 
 function scale = local_stepScale(history, xPrev, opt)
