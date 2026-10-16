@@ -4,6 +4,13 @@ AI-assisted work by Walter Puccio 2026, extending
 [`REPORTmatlab.md`](REPORTmatlab.md) (which documents the `srcm/whamp.m`
 refactor and its byte-for-byte regression harness).
 
+> **Note on names.** The solver this report calls `whamp_track.m` is now
+> `srcm/whamp_track_test.m` (the modular build, kept as the reference); the
+> plain name `srcm/whamp_track.m` now belongs to its self-contained build, and
+> [`whamp_track_v2.m`](srcm/whamp_track_v2.m) supersedes both. See the rename
+> table in [`REPORTtrack_v2.md`](REPORTtrack_v2.md). Everything below is
+> unchanged and describes the Version 1 work as it was done.
+
 ## Abstract
 
 WHAMP's root finder loses the branch it is tracking: the frequency it reports
