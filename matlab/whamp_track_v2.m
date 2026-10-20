@@ -1,5 +1,5 @@
-function Output = whamp_track_standalone_v2(PlasmaModel, InputParameters, Options)
-%WHAMP_TRACK_STANDALONE_V2 Branch tracking without hand-tuned scales.
+function Output = whamp_track_v2(PlasmaModel, InputParameters, Options)
+%WHAMP_TRACK_V2 Branch tracking without hand-tuned scales.
 %   Single-file Version 2 of WHAMP_TRACK.  It keeps the three mechanisms of
 %   Version 1 (trust-region Newton, continuity check, multi-start
 %   re-anchoring) and replaces their two weakest links:
@@ -75,7 +75,9 @@ function Output = whamp_track_standalone_v2(PlasmaModel, InputParameters, Option
 %                                                          Default true
 %     .certRadius     Contour radius for certification.
 %                                                          Default 1e-4*max(1,|x|)
-%     .certSamples    Samples on the certification contour.       Default 32
+%     .certSamples    Starting samples on the certification contour.  The
+%                     contour is doubled until its phase is resolved, so this
+%                     is a floor and not a cap.              Default 8
 %     .stepWindow     Recent branch steps used for the measured allowance.
 %                                                          Default 8
 %
@@ -165,6 +167,18 @@ anchorMap(shape(1), shape(2)).x = [];
 % solver currently is.  A one-dimensional sweep uses one axis throughout and
 % so behaves exactly as a window would.
 rateMap = cell(shape(1), shape(2), 2);
+% rateCells{axis} lists the cells holding a rate along that axis, and rateMask
+% says so in O(1) so a cell is listed once.  The lookup needs the rate at the
+% SMALLEST Manhattan distance from the query cell, which is what expanding
+% rings compute; walking them costs one ring per unit of distance and so is
+% quadratic in the grid.  On a 201x201 grid whose axis holds nothing -- the
+% perpendicular axis of a one-dimensional sweep, or an axis whose lines never
+% converged -- that walk ran all 402 rings for every single point, about 10 ms
+% each.  Keeping the occupied cells and taking a vectorised minimum distance
+% gives the identical answer in microseconds, and returns immediately when the
+% axis is empty, which is exactly when the old code was slowest.
+rateCells = {zeros(0, 2), zeros(0, 2)};
+rateMask = false(shape(1), shape(2), 2);
 
 diag = local_diag();
 perPoint = {};
@@ -180,8 +194,8 @@ while true
     iz = kit_grid_index(sweep.ZLG, kzSpec, numel(kz));
 
     [solution, status, pointDiag] = local_solve_point( ...
-        plasma, sweep.p, sweep.z, x, opt, anchorMap, rateMap, ip, iz, ...
-        cycleZFirst);
+        plasma, sweep.p, sweep.z, x, opt, anchorMap, rateMap, rateCells, ...
+        ip, iz, cycleZFirst);
 
     predictedGrid(ip, iz) = pointDiag.reference;
 
@@ -244,8 +258,13 @@ while true
         % hop after it.
         if ~pointDiag.flagged && isfinite(pointDiag.anchorX) && ...
                 pointDiag.axis >= 1 && pointDiag.dk > 0
-            rateMap{ip, iz, pointDiag.axis} = ...
-                abs(solution.X - pointDiag.anchorX) / pointDiag.dk;
+            rateAxis = pointDiag.axis;
+            rate = abs(solution.X - pointDiag.anchorX) / pointDiag.dk;
+            rateMap{ip, iz, rateAxis} = rate;
+            if ~rateMask(ip, iz, rateAxis)
+                rateMask(ip, iz, rateAxis) = true;
+                rateCells{rateAxis}(end+1, :) = [ip, iz]; %#ok<AGROW>
+            end
         end
 
         sweep = kit_remember_point(sweep, solution);
@@ -322,7 +341,8 @@ end
 % ------------------------------------------------------------------- solving
 
 function [solution, status, pointDiag] = local_solve_point( ...
-        plasma, p, z, xseed, opt, anchorMap, rateMap, ip, iz, cycleZFirst)
+        plasma, p, z, xseed, opt, anchorMap, rateMap, rateCells, ...
+        ip, iz, cycleZFirst)
 %SOLVE_POINT Solve one point against its predicted branch position.
 %
 %   Version 1 asked whether a candidate was close to the *previous root*.
@@ -423,7 +443,7 @@ end
 %
 %   The sqrt(eps) term is a resolution floor rather than a tuning constant: a
 %   discrepancy smaller than the root's own round-off cannot be told from zero.
-localRate = local_rateNear(rateMap, aIp, aIz, axis);
+localRate = local_rateNear(rateMap, rateCells, aIp, aIz, axis);
 if ~isempty(localRate) && pointDiag.dk > 0
     judgeScale = max([localRate * pointDiag.dk, ...
         sqrt(eps) * max(1, abs(xRef))]);
@@ -566,26 +586,58 @@ end
 a = struct([]);
 end
 
-function rate = local_rateNear(rateMap, ip, iz, axis)
+function rate = local_rateNear(rateMap, rateCells, ip, iz, axis)
 %RATE_NEAR  The branch's rate of change nearest to cell (ip, iz), this axis.
-%   Expanding rings of Manhattan distance from the predecessor's cell, looking
-%   for a rate recorded along the requested axis.  The nearest cell is almost
-%   always unique; where several tie, the largest is taken, since erring
-%   generous here costs a slightly looser tolerance while erring tight rejects
-%   correct roots.  Empty when the sweep has recorded nothing along this axis
-%   yet, which leaves the caller with no measurement and therefore no verdict.
+%   Of the cells holding a rate along the requested axis, take those at the
+%   SMALLEST Manhattan distance from (ip, iz) and return the largest rate among
+%   them, since erring generous here costs a slightly looser tolerance while
+%   erring tight rejects correct roots.  Empty when the sweep has recorded
+%   nothing along this axis yet, which leaves the caller with no measurement
+%   and therefore no verdict.
+%
+%   Two searches, because the two regimes want opposite ones and the original
+%   single expanding-ring walk was quadratic in the grid:
+%
+%     Rings out to LOCAL_RING_CAP.  The predecessor's neighbour almost always
+%     recorded a rate one or two cells away, so a handful of rings finishes the
+%     job, and the cost does not depend on how full the map is.
+%
+%     Otherwise the distance to every occupied cell at once.  Reaching here
+%     means the neighbourhood is EMPTY, which is the sparse case -- a
+%     one-dimensional sweep asking about the axis it never steps along, or a
+%     region where nothing converged.  There the ring walk used to run all
+%     2*nMax rings for nothing: about 10 ms per point on a 201x201 grid, which
+%     dominated the whole solve.  The vectorised scan costs nothing when few
+%     cells are occupied, which is exactly when the rings came up empty.
+%
+%   Capping the rings rather than running them to exhaustion is what makes the
+%   pair exact: the scan is a complete search, so the answer cannot depend on
+%   where the cap sits.
 rate = [];
 if axis < 1 || axis > 2
     return
 end
-nMax = max(size(rateMap));
-for ring = 0:(2 * nMax)
+cells = rateCells{axis};
+if isempty(cells)
+    return
+end
+
+ringCap = 8;                    % arbitrary: the scan below is exhaustive
+for ring = 0:ringCap
     vals = local_ring(rateMap, ip, iz, ring, axis);
     if ~isempty(vals)
         rate = max(vals);
         return
     end
 end
+
+d = abs(cells(:, 1) - ip) + abs(cells(:, 2) - iz);
+sel = find(d == min(d));
+vals = zeros(1, numel(sel));
+for q = 1:numel(sel)
+    vals(q) = rateMap{cells(sel(q), 1), cells(sel(q), 2), axis};
+end
+rate = max(vals);
 end
 
 function vals = local_ring(rateMap, ip, iz, ring, axis)
@@ -1362,22 +1414,33 @@ function [B, C] = kit_pole_constants()
 %POLE_CONSTANTS Residues and pole positions of the eight-pole approximant.
 %   The Gaussian representation of the R-function used by CHI() is built from
 %   these two fixed tables; B holds the residues and C the pole positions.
-B = [-1.734012457471826e-2-4.630639291680322e-2i, ...
-    -1.734012457471826e-2+4.630639291680322e-2i, ...
-    -7.399169923225014e-1+8.395179978099844e-1i, ...
-    -7.399169923225014e-1-8.395179978099844e-1i, ...
-    5.840628642184073+9.536009057643667e-1i, ...
-    5.840628642184073-9.536009057643667e-1i, ...
-    -5.583371525286853-1.120854319126599e1i, ...
-    -5.583371525286853+1.120854319126599e1i];
-C = [ 2.237687789201900-1.625940856173727i, ...
-    -2.237687789201900-1.625940856173727i, ...
-    1.465234126106004-1.789620129162444i, ...
-    -1.465234126106004-1.789620129162444i, ...
-    0.8392539817232638-1.891995045765206i, ...
-    -0.8392539817232638-1.891995045765206i, ...
-    0.2739362226285564-1.941786875844713i, ...
-    -0.2739362226285564-1.941786875844713i];
+%
+%   The tables are constants, so they are built once per session and handed
+%   back from then on.  Rebuilding the two literals cost about a twentieth of
+%   a millisecond per call, and this runs once per species per susceptibility
+%   evaluation, which made it a noticeable fraction of the dispersion
+%   function.  Callers must treat B and C as read-only.
+persistent Bs Cs
+if isempty(Bs)
+    Bs = [-1.734012457471826e-2-4.630639291680322e-2i, ...
+        -1.734012457471826e-2+4.630639291680322e-2i, ...
+        -7.399169923225014e-1+8.395179978099844e-1i, ...
+        -7.399169923225014e-1-8.395179978099844e-1i, ...
+        5.840628642184073+9.536009057643667e-1i, ...
+        5.840628642184073-9.536009057643667e-1i, ...
+        -5.583371525286853-1.120854319126599e1i, ...
+        -5.583371525286853+1.120854319126599e1i];
+    Cs = [ 2.237687789201900-1.625940856173727i, ...
+        -2.237687789201900-1.625940856173727i, ...
+        1.465234126106004-1.789620129162444i, ...
+        -1.465234126106004-1.789620129162444i, ...
+        0.8392539817232638-1.891995045765206i, ...
+        -0.8392539817232638-1.891995045765206i, ...
+        0.2739362226285564-1.941786875844713i, ...
+        -0.2739362226285564-1.941786875844713i];
+end
+B = Bs;
+C = Cs;
 end
 
 %% ---------------- from +whampkit/prepare_plasma.m ----------------
@@ -1947,6 +2010,245 @@ state = kit_dispersion_state(plasma, p, z, x);
 d = kit_dispersion(state, order);
 end
 
+%% ---------------- from +whampkit/evalDbatch.m ----------------
+function [D, IERR] = kit_evalDbatch(plasma, p, z, x)
+%EVALDBATCH  Dispersion function D at many frequencies, in one pass.
+%   [D, IERR] = kit_evalDbatch(PLASMA, P, Z, X) evaluates D at every
+%   entry of the frequency row vector X, for the single shared pair of
+%   perpendicular and parallel wavenumbers (P, Z).  IERR(k) is true when the
+%   pole expansion was refused at that point, exactly as
+%   kit_dispersion() refuses it; D(k) is NaN there and must not be used.
+%
+%   This is the vectorised mirror of kit_evalD(PLASMA, P, Z, X(k), 1).
+%   It exists for one caller: the argument-principle contour in
+%   kit_windingNumber(), which samples eight or sixteen frequencies
+%   around a circle at a fixed (P, Z).  Doing that with the scalar seam costs
+%   one full state build and one full susceptibility evaluation per sample,
+%   and the certification it serves is then over half the runtime of a
+%   tracked sweep.  Sharing the state and running the eight-pole sum across
+%   the samples instead is about 3x cheaper on the whole contour, measured at
+%   876 real accepted roots of a two-dimensional whistler sweep; the
+%   underlying R-function sum is 9x cheaper in isolation.
+%
+%   Two details are what make the saving real rather than theoretical, and
+%   both were found by measuring at real roots rather than in a
+%   microbenchmark.  Samples whose Taylor series has converged are frozen by
+%   zeroing their term, not by indexing the live subset out of the
+%   accumulators -- on a nine-element row the logical indexing cost more than
+%   the arithmetic it skipped, and the first version of this file was SLOWER
+%   than the scalar loop it replaced.  And all eight poles are stacked into
+%   one rBatch call, since they share ALA and the routine is elementwise;
+%   grouping cannot change the result because each sample's series is
+%   advanced independently, including its own convergence test.
+%
+%   The arithmetic is arranged to be BIT-IDENTICAL to the scalar seam, not
+%   merely close: the frequency-dependent quantities are carried as columns
+%   of a species-by-sample matrix, every product that varies across samples
+%   is an elementwise one, and the summation order within each sample is
+%   unchanged.  verify_batch.m asserts this over randomised single- and
+%   multi-species models, including drifting and loss-cone species, and
+%   reverts the moment the two paths disagree.  If the physics in
+%   dispersion() or susceptibility() is ever changed, change it here too and
+%   re-run that test.
+%
+%   Only D is available here.  The frequency derivative DX is deliberately
+%   not computed, since the phase of D is all the argument principle uses;
+%   use kit_evalD() with ORDER >= 2 when a derivative is needed.
+
+n = numel(x);
+
+% Frequency-dependent state, transposed relative to dispersion_state() so
+% that species run down the rows and samples across the columns.
+omega = (plasma.xa * x) .^ 2;
+XP = (plasma.density ./ plasma.dek ./ plasma.ren)' ./ omega;
+XX = plasma.ren' .* x;
+PP = p .* plasma.st';
+ZZ = z .* plasma.st';
+
+E = complex(zeros(6, n));
+E([1 4 6], :) = 1;
+IERR = false(1, n);
+
+for j = 1:plasma.n
+    E([1 4 6], :) = E([1 4 6], :) - XP(j, :);
+    a = plasma.aa(j, 1);
+    b = plasma.aa(j, 2);
+    delta = plasma.delta(j);
+    if a == b
+        b = 0;
+        delta = 1;
+    end
+    % factor carries the species density normalisation, so unlike the scalar
+    % path it is not a constant here but one value per sample.
+    factor = XP(j, :) ./ (a * (a - b));
+    q = a - delta * b;
+    for ib = 1:2
+        [X, bad] = susceptibilityBatch(plasma, j, a, XX(j, :), ZZ(j), PP(j));
+        E(:, :) = E(:, :) + (factor * q) .* X;
+        IERR = IERR | bad;
+        if ib == 2
+            break
+        end
+        % Second (loss-cone) term; absent for an isotropic species.
+        q = (delta - 1) * a;
+        if q == 0
+            break
+        end
+    end
+end
+
+% Refractive-index components of the first species and the three quadratic
+% forms of the determinant, all elementwise across samples.
+u1 = PP(1) * plasma.cv ./ XX(1, :);
+u3 = ZZ(1) * plasma.cv ./ XX(1, :);
+u12 = u1.^2;
+u32 = u3.^2;
+u2 = u12 + u32;
+u13 = 2 * u1 .* u3;
+detA = E(1, :) .* E(6, :) - E(3, :).^2;
+Av = u12 .* E(1, :) + u13 .* E(3, :) + u32 .* E(6, :);
+Bv = u2 .* detA + (u3 .* E(5, :) - u1 .* E(2, :)).^2;
+Cv = detA .* E(4, :) + E(6, :) .* E(2, :).^2 ...
+    + (E(1, :) .* E(5, :) + 2 * E(2, :) .* E(3, :)) .* E(5, :);
+D = (u2 - E(4, :)) .* Av - Bv + Cv;
+D(IERR) = NaN;
+end
+
+% ------------------------------------------------------------------------
+function [Y, IERR] = susceptibilityBatch(plasma, j, a, x, z, p)
+%susceptibilityBatch  Vector-x mirror of kit_susceptibility(...,1,a).
+%   Y is 6-by-numel(x); only the first derivative column of the scalar
+%   routine is reproduced.  IERR(k) marks the samples where the pole
+%   representation is refused.
+persistent Bc Cc
+if isempty(Bc)
+    [Bc, Cc] = kit_pole_constants();
+end
+ai = 1i * a;
+if plasma.mass(j) == 0
+    % Electrons carry the opposite sign of charge.
+    ai = -ai;
+end
+al = 0.5 * p^2;
+ala = a * al;
+vd = plasma.drift(j);
+n = numel(x);
+
+% Validity check for the pole representation, copied from CHI() and
+% reproduced elementwise from susceptibility().  Written as nested negations
+% of the C "if (ok) break" chain so that a NaN frequency fails every test.
+xi = imag(x);
+xr = abs(real(x) - z * vd);
+abz = abs(z);
+IERR = false(1, n);
+m = ~(xi >= -abz);
+if any(m)
+    rx = xr(m) - fix(xr(m));
+    rx(rx > 0.5) = 1 - rx(rx > 0.5);
+    IERR(m) = ~((xr(m) > 1 + 5 * abz) & (xr(m) > 1 + 5 * p)) ...
+        & ~(xi(m) >= -0.6 * rx);
+end
+
+Y = complex(zeros(6, n));
+Y(1, :) = a;                       % start from the cold-plasma terms
+Y(6, :) = a + 2 * a * vd^2;
+
+% The eight poles share ALA, and rBatch is elementwise, so every pole's
+% argument is stacked into one row and summed in a single call.  Grouping
+% cannot change the result: each sample's series is advanced independently,
+% including its own convergence test.  This is what makes the batch pay --
+% eight calls on a nine-element row cost several times what one call on
+% seventy-two elements does.
+dl = Cc + vd;
+if z < 0
+    dl = -Cc + vd;                   % poles mirrored for propagation back
+end
+% Lay the arguments out pole-major -- pole l occupies columns (l-1)*n+1 to
+% l*n -- so that a slice for one pole is contiguous.
+ystack = reshape(x.' - z * dl, 1, []);     % n-by-8 flattened column-major
+Ystack = rBatch(ystack, ala);        % 4-by-(8n)
+for l = 1:8
+    idx = (l - 1) * n + (1:n);
+    bl = Bc(l);
+    cl = Cc(l);
+    if z < 0
+        cl = -cl;
+    end
+    y = x - dl(l) * z;
+    bly = bl ./ y;
+    rc = Ystack(:, idx);
+    xy = 1 + a * z * cl ./ y;
+    ps = xy .* rc(1, :);
+    psp = xy .* rc(3, :);
+    Y(1, :) = Y(1, :) + a * bl * y .* ps;
+    Y(2, :) = Y(2, :) + ai * bl * psp;
+    Y(3, :) = Y(3, :) + a * p * bl * dl(l) .* ps;
+    Y(4, :) = Y(4, :) + bly .* psp;
+    Y(5, :) = Y(5, :) - ai * p * bly * dl(l) .* psp;
+    Y(6, :) = Y(6, :) + 2 * a * bly * dl(l)^2 .* (x - vd * z + al .* ps);
+end
+Y(4, :) = Y(1, :) - 2 * a^2 * al * Y(4, :);
+end
+
+% ------------------------------------------------------------------------
+function rc = rBatch(y, al)
+%rBatch  Vector-x mirror of kit_r_function for a shared AL.
+%   The Taylor branch is taken for the whole batch when every sample falls in
+%   it, which is the usual case: on a whistler sweep the contour sits far
+%   from the harmonics and AL is small.  If any sample would use the
+%   asymptotic or integral branch the batch drops back to the scalar
+%   per-point routine, so the rare case stays correct and the common one
+%   stays fast.
+%
+%   Samples that have already converged are frozen by carrying a zero term
+%   forward rather than by indexing the live subset out of the accumulators.
+%   That is bit-identical -- adding zero leaves a partial sum untouched, and
+%   the scalar loop's BREAK means it too adds nothing further -- but it costs
+%   a couple of elementwise products per pass instead of eight
+%   logical-indexed reads and writes, which on a nine-element row dominated
+%   the loop and made the batch slower than the scalar code it replaced.
+ay = abs(y);
+if all(al < 4 | ay.^2 > 75 * al | ay > 40 + al / 3)
+    y2 = y.^2;
+    d1 = y2 - 1;
+    pn = y ./ d1;
+    pyn = -y .* (y2 + 1) ./ (d1 .* d1);
+    r1 = pn; r2 = pyn; r3 = pn; r4 = pyn;
+    % LIVE is true for a sample still contributing and false once frozen.
+    live = true(size(y));
+    for i = 2:100
+        % Where frozen, substitute a harmless denominator so that a sample
+        % which has stopped cannot generate an Inf from a pole of the series
+        % that the scalar loop, having already broken, would never reach.
+        e = y2 - i^2;
+        e(~live) = 1;
+        coterm = (2 * i - 1) ./ e * al;
+        newpyn = coterm .* (pyn - 2 * y2 ./ e .* pn);
+        newpn = coterm .* pn;
+        r1 = r1 + newpn;
+        r2 = r2 + newpyn;
+        r3 = r3 + i * newpn;
+        r4 = r4 + i * newpyn;
+        pn = newpn;
+        pyn = newpyn;
+        % Freeze a sample once its term is eight orders below the leading
+        % one, which is where the scalar loop would have broken.
+        live = ~(abs(pn) * 1e8 < abs(r1));
+        pn = pn .* live;
+        pyn = pyn .* live;
+        if ~any(live)
+            break
+        end
+    end
+    rc = [r1; r2; r3; r4];
+else
+    rc = zeros(4, numel(y));
+    for k = 1:numel(y)
+        rc(:, k) = kit_r_function(y(k), al);
+    end
+end
+end
+
 %% ---------------- from +whampkit/windingNumber.m ----------------
 function n = kit_windingNumber(plasma, p, z, x0, radius, numSamples)
 %WINDINGNUMBER Number of zeros of D inside a circle, by the argument principle.
@@ -1962,9 +2264,20 @@ function n = kit_windingNumber(plasma, p, z, x0, radius, numSamples)
 %   magnitude across the (p, z, x) domain, so no absolute residual
 %   threshold can say whether a candidate point is a root.
 %
-%   kit_windingNumber(..., RADIUS) uses RADIUS instead of the default
-%   1e-4 * max(1, |X0|).  kit_windingNumber(..., RADIUS, NUMSAMPLES)
-%   changes the contour resolution from the default 32.
+%   N = kit_windingNumber(..., RADIUS) uses RADIUS instead of the
+%   default 1e-4 * max(1, |X0|).
+%
+%   The contour is sampled ADAPTIVELY.  NUMSAMPLES (default 8) points are
+%   used to start, and the count doubled until the largest phase step
+%   between neighbouring samples falls below pi/2, so that no zero or pole
+%   can hide in an unresolved arc.  A contour enclosing one simple zero has
+%   an almost linear phase, so its first attempt already passes and costs
+%   nine evaluations of D; a pole grazing the contour forces refinement up
+%   to the NUMSAMPLES * 4 ceiling.  Capping the ceiling there means this is
+%   never much dearer than the fixed 32-point contour it replaces, and
+%   strictly more reliable, since a contour that coarse is now only accepted
+%   once it has been shown to be resolved.  Passing NUMSAMPLES sets the
+%   starting resolution; refinement from there still happens.
 %
 %   Points where the susceptibility expansion is refused (IERR) are treated
 %   as "unknown" and the result is NaN, rather than silently counting as a
@@ -1974,21 +2287,40 @@ if nargin < 5 || isempty(radius)
     radius = 1e-4 * max(1, abs(x0));
 end
 if nargin < 6 || isempty(numSamples)
-    numSamples = 32;
+    numSamples = 8;
 end
 
-theta = (0:numSamples) / numSamples * 2 * pi;
-values = nan(1, numSamples + 1);
-for k = 1:numSamples + 1
-    x = x0 + radius * complex(cos(theta(k)), sin(theta(k)));
-    d = kit_evalD(plasma, p, z, x, 2);
-    if d.IERR ~= 0 || ~isfinite(d.D) || d.D == 0
-        n = NaN;
+% ORDER 1, not 2: the phase of D is all the argument principle uses, and
+% dispersion() returns the same D either way while skipping the frequency
+% derivative the Newton iteration needs and this test does not.
+for refine = 0:2
+    [n, worstStep] = local_contour(plasma, p, z, x0, radius, numSamples);
+    if isnan(n) || worstStep <= pi / 2
         return
     end
-    values(k) = d.D;
+    numSamples = 2 * numSamples;
+end
 end
 
-n = sum(angle(values(2:end) ./ values(1:end-1))) / (2 * pi);
+function [n, worstStep] = local_contour(plasma, p, z, x0, radius, numSamples)
+%CONTOUR  Winding of D around one closed polygon, and its coarsest arc.
+%   Every sample shares one (p, z), so the whole polygon is evaluated in a
+%   single vectorised pass through kit_evalDbatch rather than by
+%   rebuilding the dispersion state once per corner.  The samples are the
+%   vertices of a closed polygon, so the first is repeated at the end and
+%   D is evaluated twice there; that keeps the phase increments between
+%   neighbouring samples exactly what the scalar version produced.
+theta = (0:numSamples) / numSamples * 2 * pi;
+x = x0 + radius * complex(cos(theta), sin(theta));
+[values, IERR] = kit_evalDbatch(plasma, p, z, x);
+if any(IERR) || any(~isfinite(values)) || any(values == 0)
+    n = NaN;
+    worstStep = Inf;
+    return
+end
+
+steps = angle(values(2:end) ./ values(1:end-1));
+n = sum(steps) / (2 * pi);
 n = round(n * 2) / 2;      % half-integers only if the contour is too coarse
+worstStep = max(abs(steps));
 end

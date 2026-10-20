@@ -1,0 +1,7 @@
+# Build artifacts
+*.o
+*.a
+whamp
+whamp.exe
+whamp_engine_test
+whamp_engine_test.exe
