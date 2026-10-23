@@ -1,8 +1,8 @@
 function Output = whamp_track_v2(PlasmaModel, InputParameters, Options)
 %WHAMP_TRACK_V2 Branch tracking without hand-tuned scales.
-%   Single-file Version 2 of WHAMP_TRACK.  It keeps the three mechanisms of
-%   Version 1 (trust-region Newton, continuity check, multi-start
-%   re-anchoring) and replaces their two weakest links:
+%   Translation and improvments done with AI assist (Walter Puccio 2026) 
+%   trust-region Newton, continuity check, multi-start re-anchoring)
+%   and replaces their two weakest links:
 %
 %   1. NO HAND-TUNED SCALE.  Version 1 sized everything from the median of the
 %      branch's recent steps, floored by RELFLOOR = 0.25 of the previous root.
