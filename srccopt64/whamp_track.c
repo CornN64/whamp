@@ -192,8 +192,14 @@ static TrackSolution tr_solve(double p, double z, cd seed, double radius,
                 ++sol.clamped;
             X -= correction;
             ierr = tr_evaluate(p, z, X, 2);
+            /* A damping flag raised part-way through the iteration is not the
+             * same statement as one raised by the very first evaluation: the
+             * reference reports the latter as "too heavily damped" but the
+             * former only as a search that failed, because its solver routine
+             * resets the status to "no root found" whenever it returns
+             * without one. */
             if (ierr != 0) {
-                sol.status = 2;
+                sol.status = 0;
                 return sol;
             }
             if (cabs(D) < oldMagnitude) {
@@ -448,7 +454,8 @@ void whamp_track_v2(TrackDiagnostics *diagnostics)
     TrackRoot *roots = NULL, last = {0}, lineAnchor = {0};
     double *rates = NULL;
     TrackCounts counts = {0};
-    double pOrigin, zOrigin, plg, zlg, p, z, xseed;
+    double pOrigin, zOrigin, plg, zlg, p, z;
+    cd xseed;
     int ip, iz, zFirst, lineFirst = 1, done = 0;
     int maxRateCells, i;
 
@@ -467,12 +474,21 @@ void whamp_track_v2(TrackDiagnostics *diagnostics)
     maxRateCells = kperpSize * kparSize;
     roots = (TrackRoot *)calloc((size_t)maxRateCells, sizeof(*roots));
     rates = (double *)malloc((size_t)maxRateCells * 2 * sizeof(*rates));
+    if (diagnostics) {
+        memset(diagnostics, 0, sizeof(*diagnostics));
+        /* The sweep visits each grid cell at most once, so the grid bounds
+         * the number of per-point records. */
+        diagnostics->attemptsPerPoint =
+            (double *)malloc((size_t)maxRateCells * sizeof(double));
+    }
     if (!roots || !rates) {
         free(roots);
         free(rates);
         fprintf(stderr, "whamp_track_v2: unable to allocate sweep history\n");
-        if (diagnostics)
+        if (diagnostics) {
+            free(diagnostics->attemptsPerPoint);
             memset(diagnostics, 0, sizeof(*diagnostics));
+        }
         return;
     }
     for (i = 0; i < maxRateCells * 2; ++i)
@@ -577,6 +593,20 @@ void whamp_track_v2(TrackDiagnostics *diagnostics)
         }
         counts.attempts += attempts;
         counts.rejected += rejected;
+
+        /* "Too heavily damped" is a physical statement about the plasma, not
+         * a numerical one about the iteration, so it outranks any root a
+         * fallback seed happened to find.  The reference returns immediately
+         * on a CLEAN acceptance -- which therefore survives the override --
+         * but a root kept only as a last resort against the continuity check
+         * falls through and is reported as damped instead. */
+        if (engineStatus == 2 && !foundClean)
+            accepted.status = 2;
+
+        if (diagnostics && diagnostics->attemptsPerPoint &&
+            counts.pointsVisited <= maxRateCells)
+            diagnostics->attemptsPerPoint[counts.pointsVisited - 1] =
+                (double)attempts;
 
         if (accepted.status == 1) {
             double winding = NAN;

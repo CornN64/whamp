@@ -53,7 +53,13 @@ extern TrackOptions trackOptions;
 
 void track_options_default(void);
 
-/* Counts worth reporting after a sweep.  May be NULL. */
+/* Counts worth reporting after a sweep.  May be NULL.
+ *
+ * attemptsPerPoint mirrors whamp_track_v2.m's diagnostics.attemptsPerPoint:
+ * one entry per visited point, in visit order.  It is allocated by the
+ * tracker and becomes the caller's to free; it is NULL when no point was
+ * visited or when the allocation failed.  whamp_track_v2.m also carries a
+ * `perPoint` cell of per-point detail; that debug dump has no C equivalent. */
 typedef struct {
     int pointsVisited;
     int converged;
@@ -65,6 +71,7 @@ typedef struct {
     int notCertified;
     int certUnknown;
     double meanAttempts;
+    double *attemptsPerPoint;
 } TrackDiagnostics;
 
 /* Runs the sweep.  Reads the comin globals and fills the comoutput arrays

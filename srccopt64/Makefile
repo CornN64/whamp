@@ -15,6 +15,9 @@ CC      = gcc
 AR      = ar r
 BINDIR  = .
 
+# MATLAB's MEX compiler (must be on PATH; override with MEX=/path/to/mex).
+MEX     = mex
+
 CFLAGS  = -c -std=c11 -Wall -Wextra -O2
 
 # Numerical kernel shared by both executables.
@@ -61,8 +64,23 @@ whamp_track_dump: $(TRACK_DUMP_OBJS)
 libwhamp.a: $(LIB_OBJS)
 	$(AR) $@ $(LIB_OBJS)
 
+# MATLAB gateway (translation of ../src/mexwhamp.F).  Requires MATLAB's mex
+# on PATH and produces mexwhamp.mexa64 / .mexw64 / .mexmaci64 depending on
+# the host.  This is the all-double engine variant; ../srccopt is the variant
+# that reproduces the Fortran reference bit-for-bit.
+mex: libwhamp.a mexwhamp.c
+	$(MEX) -O -R2017b mexwhamp.c libwhamp.a
+
+# Struct-interface wrapper: mexwrap(PlasmaModel, InputParameters) exactly as
+# whamp.m takes them, returning whamp.m's Output structure.  Links the engine
+# in, so the MEX is self-contained; ../matlab/mexwrap.m only locates it.
+mexwrap: libwhamp.a mexwrap.c
+	$(MEX) -O -R2017b mexwrap.c libwhamp.a
+
 clean:
 	rm -f *.o libwhamp.a whamp whamp_engine_test whamp_track_test \
-		whamp_engine_test.exe whamp_track_test.exe whamp.exe
+		whamp_engine_test.exe whamp_track_test.exe whamp.exe \
+		mexwhamp.mexa64 mexwhamp.mexw64 mexwhamp.mexmaci64 \
+		mexwrap.mexa64 mexwrap.mexw64 mexwrap.mexmaci64
 
-.PHONY: all clean
+.PHONY: all clean mex mexwrap

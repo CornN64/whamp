@@ -118,6 +118,13 @@ ex2 = {struct('m',0, 'n',1,'t',10,'a',1,'b',0,'d',1,'vd',0), ...
        struct('m',1, 'n',1,'t',1, 'a',1,'b',0,'d',1,'vd',0)};
 iso = {struct('m',16,'n',1,'t',10,'a',1,'b',0,'d',1,'vd',0), ...
        struct('m',0, 'n',1,'t',1, 'a',1,'b',0,'d',1,'vd',0)};
+% Whistlereanisotropy_.m: one hot anisotropic electron species at 50 nT.  The
+% root on this line is strongly complex (imaginary part reaching -0.89), so it
+% is the case that exercises carrying a COMPLEX seed from point to point.  A
+% seed truncated to its real part still converges over most of the line and
+% only wanders onto another branch near the top, which is exactly the failure
+% this must catch.
+whistler = {struct('m',0,'n',1,'t',100,'a',5,'b',0,'d',1,'vd',0)};
 three = {struct('m',16,'n',1, 't',10,'a',5,'b',0,'d',1,'vd',1), ...
          struct('m',1, 'n',0.5,'t',1, 'a',1,'b',0,'d',1,'vd',0.5), ...
          struct('m',0, 'n',1.5,'t',1, 'a',1,'b',0,'d',1,'vd',0)};
@@ -135,6 +142,10 @@ cases = { ...
     local_case('isotropic', 2.8, iso, [0 10 0], [0.002 0.001 0.006], 1, 0, 0.1);
     local_case('three_species', 2.8, three, [0.005 0.001 0.008], [0.002 0.001 0.006], 1, 0, 0.1);
     local_case('start_high', 2.8, ex1, [0 10 0], [0.002 0.001 0.008], 1, 0, 0.9);
+    local_case('line89_whistler', 1.39964, whistler, ...
+        [0.01 10 0.01], [0.01 0.01 0.90], 1, 0, 0.006208543881328393);
+    local_case('damped_boundary', 1.39964, whistler, ...
+        [0.25 10 0.25], [0.01 0.01 0.90], 1, 0, 0.006208543881328393);
     };
 end
 

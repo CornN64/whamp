@@ -193,6 +193,27 @@ static void save_output(void)
     } else {
         indexKpar = 1 + fnint((ZLG - ZM[1]) / ZM[3]);
     }
+    /*
+     * Clamp the grid indices into range, mirroring whamp.m's grid_index.
+     * When a sweep point fails to converge or is too heavily damped, the
+     * sweep sets PLG/ZLG to the SWEEP_END sentinel to stop cycling in that
+     * direction, but the loop keeps walking the other axis, so a subsequent
+     * save_output can be handed the sentinel.  Without a clamp the resulting
+     * index runs far outside the allocated output arrays and corrupts memory
+     * (an access violation under MATLAB; silent heap corruption in the
+     * Fortran original, whose bounds checking is off by default).  Clamping
+     * leaves every in-range index untouched, so the golden outputs are
+     * unchanged; only the sentinel iteration is redirected to the boundary
+     * cell, exactly as whamp.m records it.
+     */
+    if (indexKperp < 1)
+        indexKperp = 1;
+    else if (indexKperp > kperpSize)
+        indexKperp = kperpSize;
+    if (indexKpar < 1)
+        indexKpar = 1;
+    else if (indexKpar > kparSize)
+        indexKpar = kparSize;
 
     if (rootFindingConverged) {
         F2D(flagSolutionFoundOUT, indexKperp, indexKpar) = 1;

@@ -70,7 +70,19 @@ static const DumpCase CASES[] = {
       0.005, 0.008, 0.001,   0.002, 0.006, 0.001, 1, 0, 0.1 },
     { "start_high", 2.8,
       { {16,1,10,5,0,1,1}, {0,1,1,1,0,1,0} }, 2,
-      0.0, 0.0, 10.0,   0.002, 0.008, 0.001, 1, 0, 0.9 }
+      0.0, 0.0, 10.0,   0.002, 0.008, 0.001, 1, 0, 0.9 },
+    /* Whistlereanisotropy_.m: 50 nT electrons, kperp = 0.01, kpar 0.01:0.01:0.90.
+     * The root is strongly complex along this line, so it is the case that
+     * checks the seed is carried between points as a COMPLEX frequency. */
+    { "line89_whistler", 1.39964,
+      { {0,1,100,5,0,1,0} }, 1,
+      0.01, 0.01, 10.0,   0.01, 0.90, 0.01, 1, 0, 0.006208543881328393 },
+    /* Same plasma one line further out in kperp, where the sweep crosses the
+     * boundary between "too heavily damped" and "no convergence" and the
+     * Newton iteration raises the damping flag part-way through a solve. */
+    { "damped_boundary", 1.39964,
+      { {0,1,100,5,0,1,0} }, 1,
+      0.25, 0.25, 10.0,   0.01, 0.90, 0.01, 1, 0, 0.006208543881328393 }
 };
 
 static void set_model(const DumpCase *c)

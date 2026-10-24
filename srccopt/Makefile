@@ -13,6 +13,9 @@ CC      = gcc
 AR      = ar r
 BINDIR  = .
 
+# MATLAB's MEX compiler (must be on PATH; override with MEX=/path/to/mex).
+MEX     = mex
+
 CFLAGS  = -c -std=c11 -Wall -Wextra -O2
 
 # Numerical kernel shared by both executables.
@@ -40,7 +43,14 @@ whamp_engine_test: $(ENGINE_OBJS)
 libwhamp.a: $(LIB_OBJS)
 	$(AR) $@ $(LIB_OBJS)
 
-clean:
-	rm -f *.o libwhamp.a whamp whamp whamp_engine_test whamp_engine_test.exe whamp.exe
+# MATLAB gateway (translation of ../src/mexwhamp.F).  Requires MATLAB's mex
+# on PATH and produces mexwhamp.mexa64 / .mexw64 / .mexmaci64 depending on
+# the host.  Move the result into ../matlab/+whamp/ where run.m calls it.
+mex: libwhamp.a mexwhamp.c
+	$(MEX) -O -R2017b mexwhamp.c libwhamp.a
 
-.PHONY: all clean
+clean:
+	rm -f *.o libwhamp.a whamp whamp whamp_engine_test whamp_engine_test.exe whamp.exe \
+		mexwhamp.mexa64 mexwhamp.mexw64 mexwhamp.mexmaci64
+
+.PHONY: all clean mex
