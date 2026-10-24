@@ -42,7 +42,8 @@
  * The engine interface (comin.h, comoutput.h) is identical across srcc/,
  * srcc64/ and srccopt64/, so this file drops into any of them unchanged.
  * srccopt/ is the natural home because it reproduces the Fortran results
- * bit-for-bit; see ../REPORT64.md.
+ * bit-for-bit; see ../REPORT.md, section 2.  The newer mexwrap.c is the
+ * recommended gateway and is built in all four C trees.
  */
 #include <string.h>
 

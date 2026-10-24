@@ -6,6 +6,7 @@
 *.out
 *.synctex.gz
 *.exe
+*.mexw64
 src/*.mod
 src/whamp
 src/whamptest

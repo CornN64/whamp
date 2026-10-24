@@ -1,527 +1,714 @@
-# WHAMP Fortran → C Translation: Verification Report
-AI translation by Walter Puccio 2026
+# WHAMP: Translation, Porting and Branch Tracking — Consolidated Report
 
-## Abstract
+AI-assisted work by Walter Puccio, 2026.
 
-The WHAMP plasma wave code in [`src/`](src) (19 `.f90` files, 2 290 lines of
-Fortran 90) has been translated file-by-file into C in
-[`srcc/`](srcc) (18 `.c` + 4 `.h` files, 3 171 lines), and this report
-documents how the translation was verified to reproduce the original program
-**byte-for-byte** on its observable output.
+This report merges and supersedes five earlier ones — `REPORT`, `REPORT64`,
+`REPORTmatlab`, `REPORTtrack` and `REPORTtrack_V2` — which have been deleted.
+It records six phases of work on the WHAMP plasma-wave code and the evidence for
+each.
 
-Because WHAMP's user interface is a line-oriented REPL whose exact column
-layout, field separators, blank records and help texts are themselves part of
-its behaviour, "numerically equal" output is not a sufficient acceptance
-criterion. Two measures made exact comparison possible. First, the C code does
-not use the C library for numeric formatting; instead
-[`srcc/whamp.h`](srcc/whamp.h) implements the precise field-generation rules of
-gfortran 6.3 for every edit descriptor WHAMP uses (`1P…Ew.d`, `Fw.d`, `Iw`, and
-list-directed `WRITE(*,*)` record construction, including its separator rules
-and `(re,im)` complex form). Second, verification is *differential*: a
-reference executable is built with `gfortran` from the untouched `src/` tree,
-both binaries are driven with identical arguments, working directory and piped
-input, and their raw stdout byte streams are compared.
+## Scope
 
-**Result.** Of 67 differential comparisons, 64 are byte-identical: the
-[`doc/test.txt`](doc/test.txt) acceptance session, all 19 output-format letters
-on two plasma models, the `-debug` and `-maxiterations` code paths, the
-parameter-override and grid-control edge cases, and the callable-library engine
-test. Differential testing uncovered and fixed three genuine translation defects
-that inspection had missed: a list-directed separator suppressed after a
-colon-terminated character item, the empty records emitted by trailing `/` in
-two `FORMAT` statements, and a Fortran `CYCLE <construct-name>` that restarts
-the *outer* loop but had been rendered as a C `continue` on the inner one.
-
-The three remaining comparisons differ only in the last mantissa bit of
-*intermediate* values, and are analysed rather than "fixed": a one-ULP seed that
-a non-convergent Newton iteration amplifies in the Ex2 debug trace, a
-similarly ill-conditioned re-solve, and grid entries that the original Fortran
-never initialises (undefined behaviour, non-deterministic even between repeated
-runs of the Fortran binary itself). **No difference larger than one unit in the
-last place was found in any final or physical output.**
-
-Toolchain used for all measurements: `gcc` / `gfortran` 6.3.0
-(`C:\MinGW\bin`), Windows 10/11 x64.
-
----
-
-## 1. Translation strategy
-
-WHAMP is not merely a numerical program — its user interface is a
-line-oriented REPL whose exact column layout, separators, blank records and
-help texts are part of its observable behaviour. A naive C port that produced
-"the same numbers with `printf("%g")`" would therefore not be verifiable
-against the original.
-
-The translation was built on three rules:
-
-1. **One-to-one file mapping.** Each `src/<name>.f90` becomes `srcc/<name>.c`
-   with the same routines, in the same order, with the original Fortran source
-   kept as comments where the mapping is non-obvious. Fortran `MODULE`s
-   (`comin`, `comcout`, `comoutput`) become `comin.h/.c`, `comcout.h/.c`,
-   `comoutput.h/.c` — the module variables become `extern` globals defined in
-   the matching `.c`.
-2. **A byte-exact gfortran format emulator.** Rather than trusting the C
-   library's `printf` (whose `%e`/`%g`/list-directed behaviour differs from
-   gfortran's), `srcc/whamp.h` implements the exact field-generation rules of
-   gfortran 6.3 for every format specifier WHAMP uses:
-   * `fE(w, d, scale1, v)` — `1P…Ew.d` with gfortran's exponent-adjustment,
-     rounding (round-half-even on the exact binary value), overflow to
-     `********` and underflow to `0.000E+00` semantics;
-   * `fF(w, d, v)` — `Fw.d`, including `NaN` → ` NaN` and `Inf` → ` Infinity`
-     right-justified, and `*`-fill on field overflow;
-   * `fint()` — `Iw` editing and `*`-overflow;
-   * `ld_real() / ld_int() / ld_logical() / ld_complex()` — Fortran
-     *list-directed* (`WRITE(*,*)`) record construction, including the
-     26-character default real field, the inter-item separator rules, and the
-     `(re,im)` complex form;
-   * `F32()` — the `REAL(KIND=…)` single/double distinction used by the
-     original `kind(1.0d0)` parameters.
-3. **Faithful control flow.** Fortran `CYCLE <construct-name>`, labelled `GOTO`,
-   `ENTRY`, `SAVE` locals, implied-DO lists, and trailing-`/` FORMAT semantics
-   were translated explicitly (flags/`break`/outer-`continue` for named
-   `CYCLE`; static locals for `SAVE`), not approximated.
-
-### Differential test harness
-
-Verification is **differential**, not assertion-based:
-
-* A reference executable `fortran_ref/whamp_ref.exe` is built with `gfortran`
-  directly from the **untouched** `src/` directory (which is treated as
-  read-only throughout).
-* `srcc/whamp_c.exe` is built from the C translation.
-* `fortran_ref/runcase.ps1` runs each binary with the same working directory,
-  the same `-file ..\Models\<model>` argument, the same piped stdin script, and
-  the same CLI options, capturing raw stdout bytes.
-* `fortran_ref/battery2.ps1` / `cmpcase2.ps1` / `cmpprefix.ps1` compare the two
-  byte streams and report the first differing byte with context.
-
-Because WHAMP's REPL loops forever on end-of-file (both binaries do this
-identically — Fortran's rewind-on-stdin fails silently leaving `IOSTAT /= 0`),
-the harness reads a bounded prefix of stdout and then kills the process. For
-every case reported below as *IDENTICAL*, both streams reached end-of-stream at
-the same length, or both were truncated at the same bound with zero differing
-bytes in the common prefix.
-
----
-
-## 2. The `doc/test.txt` acceptance tests
-
-`doc/test.txt` §4.4 documents the reference session for the `Models/Ex1`
-plasma (B = 100 nT, n = 1 cm⁻³, O⁺ with T⊥ = 50 eV / T∥ = 10 eV /
-v_d = 1 v_th, 1 eV electrons). The documented expected output is:
-
-```
-# PLASMA FREQ.: 8.9786KHZ GYRO FREQ.: 2.8000KHZ ELECTRON DENSITY:1.00000E+06M-3
-# O+ DN= 1.00000E+06 T= 0.01000 D=1.00 A=5.00 B=0.00 VD= 1.00
-# e- DN= 1.00000E+06 T= 0.00100 D=1.00 A=1.00 B=0.00 VD= 0.00
-
-#INPUT:
-p0z.0022f.1
-
-#OUTPUT:
-pzf
-
-0.0000000 0.0022000 1.0640799E-01 3.34E-11
-
-#INPUT:
-```
-
-and, for the `pzf/e` output format:
-
-```
-0.0000000 0.0022000 1.0640799E-01 3.34E-11
-
-EX= 0.7071 0.0000 EY=-0.0000 0.7071 EZ= 0.0000 0.0000
-```
-
-(The document collapses whitespace; the real records are fixed-width fields.)
-
-**Result.** The C binary reproduces the Fortran binary's output for this
-session **byte-for-byte** (334 bytes), and the numeric content matches the
-documented expectation: `p = 0.0000000`, `z = 0.0022000`,
-`f = 1.0640799E-01` with imaginary part `3.34E-11`, and
-`EX = 0.7071 + 0.0000i`, `EY = -0.0000 + 0.7071i`, `EZ = 0.0000 + 0.0000i`
-(right-hand polarised, `E_y = i E_x`, as the document states).
-
----
-
-## 3. Test matrix and results
-
-### 3.1 Core sessions
-
-| Test | Input / options | Model | Bytes | Result |
-|---|---|---|---|---|
-| T1 | `p0z.0022f.1` ⏎ `pzf` ⏎ `s` | Ex1 | 334 | **IDENTICAL** |
-| T2 | T1 + `o` ⏎ `pzf/e` | Ex1 | 488 | **IDENTICAL** |
-| T3 | T1 with `-debug` | Ex1 | 1 285 | **IDENTICAL** |
-| T4 | T1 with `-debug -maxiterations 20` | Ex1 | 1 355 | **IDENTICAL** |
-
-### 3.2 Every output-format letter
-
-Each letter of the `OUTPT` format string was exercised on both plasma models
-(`Models/Ex1`, `Models/Ex2`) with the same T1 solve.
-
-| Letter | Meaning | Ex1 | Ex2 |
-|---|---|---|---|
-| `b` | wave magnetic field components | **IDENTICAL** (578 B) | **IDENTICAL** (608 B) |
-| `d` | dispersion function + derivatives | **IDENTICAL** (578 B) | **IDENTICAL** (608 B) |
-| `e` | wave electric field components | **IDENTICAL** (≥200 KB) | **IDENTICAL** (≥200 KB) |
-| `f` | frequency ⟨real, imaginary⟩ | **IDENTICAL** (411 B) | **IDENTICAL** (471 B) |
-| `g` | group velocity components | **IDENTICAL** (≥200 KB) | **IDENTICAL** (≥200 KB) |
-| `h` | \|e\|/\|b\| [mV/nT] | **IDENTICAL** (2 263 B) | **IDENTICAL** (2 293 B) |
-| `l` | \|b_p\|/\|b_z\| | **IDENTICAL** (411 B) | **IDENTICAL** (471 B) |
-| `m` | Im[b_x]/Re[b_y] | **IDENTICAL** (578 B) | **IDENTICAL** (608 B) |
-| `n` | ellipticity b_x/b_y | **IDENTICAL** (578 B) | **IDENTICAL** (608 B) |
-| `o` | general ellipticity | **IDENTICAL** (≥200 KB) | **IDENTICAL** (≥200 KB) |
-| `p` | k⊥ | **IDENTICAL** (377 B) | **IDENTICAL** (407 B) |
-| `r` | refractive index | **IDENTICAL** (≥200 KB) | **IDENTICAL** (≥200 KB) |
-| `s` | spatial growth rates | **IDENTICAL** (334 B) | **IDENTICAL** (364 B) |
-| `t` | dielectric tensor + derivatives | **IDENTICAL** (578 B) | **IDENTICAL** (608 B) |
-| `u` | total/electric wave energy | **IDENTICAL** (≥200 KB) | **IDENTICAL** (≥200 KB) |
-| `v` | Poynting flux | **IDENTICAL** (578 B) | **IDENTICAL** (608 B) |
-| `x` | phase of b_z against b_x | **IDENTICAL** (≥200 KB) | **IDENTICAL** (≥200 KB) |
-| `y` | per-species energy density/flux (`AV`) | **IDENTICAL** (≥200 KB) | **IDENTICAL** (≥200 KB) |
-| `z` | k∥ | **IDENTICAL** (380 B) | **IDENTICAL** (410 B) |
-
-19/19 letters identical on Ex1, 19/19 on Ex2. (Cases marked ≥200 KB are
-truncated at a 200 000-byte bound because the REPL loops to EOF; zero bytes
-differ within the bound.)
-
-### 3.3 Edge cases, parameter changes and CLI options
-
-| Test | Description | Bytes | Result |
-|---|---|---|---|
-| `R_help` | `h` at the `#INPUT:` prompt (full TYPIN help, FORMAT 131) | ≥200 KB | **IDENTICAL** |
-| `R_bad1` | unrecognised input word `qqq` | ≥200 KB | **IDENTICAL** |
-| `R_bad2` | punctuation-only input `@#$` | ≥200 KB | **IDENTICAL** |
-| `R_fonly` | frequency-only solve `f.05` | 330 | **IDENTICAL** |
-| `R_comb` | packed single line `p.1.2.01z.1.2.01f.1` | 394 | **IDENTICAL** |
-| `R_two` | three separate parameter lines then solve | 544 | **IDENTICAL** |
-| `R_big` | 1000-point p/z/f grids | 394 | **IDENTICAL** |
-| `R_log` | logarithmic grid `p.01.10.3l` | 394 | **IDENTICAL** |
-| `R_par1`–`R_par6` | runtime `N=`, `C=`, `B=` overrides (1e5…1e9 m⁻³, C = 1…100, B = 5000 nT) | 544 each | **IDENTICAL** (all 6) |
-| `X2_T1` | T1 on model Ex2 | 364 | **IDENTICAL** |
-| `X2_T2` | T2 on model Ex2 (output to file path) | 484 | **IDENTICAL** |
-| `X2_dbg` | T1 on Ex2 with `-debug` | 8 065 | 1 ULP — see §5 |
-| `R_negf` | re-solve at `f-.1` after a converged solve | 454 | 1 ULP — see §5 |
-
-### 3.4 Library / engine-test interface
-
-`whamp_engine.f90` (the callable library entry point) and
-`whamp_engine_test.f90` (its driver) were also translated, and the driver was
-built both ways (`fortran_ref/engtest/whamp_engine_test_ref.exe` vs
-`srcc/whamp_engine_test_c.exe`).
-
-| Test | Arguments | Result |
+| Phase | Deliverable | Verified by |
 |---|---|---|
-| ET1 | *(no arguments — interactive)* | **IDENTICAL** (≥20 KB) |
-| ET2 | `-f 0.05` | **IDENTICAL** (≥20 KB) |
-| ET3 | `-p 0.1 -z 0.1 -f 0.05` | **IDENTICAL** (≥20 KB) |
-| ET4 | `-p 0.1 -z 0.1 -f 0.05 -kperpmax 100 -kmax 100` | **IDENTICAL** (≥20 KB) |
-| ET5 | `-p 0.1 -z 0.1 -f 0.05 -verbose` | **IDENTICAL** (≥20 KB) |
-| ET9 | `-p 0.05 -z 0.05 -f 0.02 -maxiterations 50` | **IDENTICAL** (≥20 KB) |
-| ET6/ET7/ET8 | grid sweeps writing unwritten `fOUT` entries | see §5.3 |
+| 1 | `src/` Fortran 90 → `srcc/` C, byte-for-byte | 67 differential comparisons vs a gfortran oracle |
+| 2 | `srccopt/` (tidied, byte-exact) and `srccopt64/` (all-`double` experiment) | 30-session golden suites + oracle replay |
+| 3 | `srcm/whamp.m` pure-MATLAB port, refactored | 30-case `%.20g` regression + conformance to `srccopt64` |
+| 4 | `whamp_track` v1 — branch tracking with a trust region | nine adversarial sweep lines vs a step-refined reference |
+| 5 | `whamp_track_v2` — tracking with no hand-tuned scales | same harness, plus winding-number certification |
+| 6 | Tracker + `mexwrap` MEX gateway back-ported to C | `whamp_track_test`, `whamp_track_dump`, MATLAB suite |
 
-### 3.5 Summary
+Toolchain throughout: `gcc` / `gfortran` 6.3.0 (`C:\MinGW\bin`), MATLAB R2020b,
+Windows 10/11 x64.
 
-**61 differential cases + 6 engine-test cases = 67 comparisons.**
-64 are byte-identical. The 3 remaining differ only in the final reported
-mantissa bit(s) of intermediate debug values, or in values that are genuinely
-uninitialised in the original Fortran (see §5). **No difference of more than
-one unit in the last place has been found in any final or physical output.**
+The method is the same in every phase: **anchor to the real reference program
+before editing anything**, dump at full precision rather than comparing with a
+tolerance, change one thing at a time, and re-diff after every change.
 
 ---
 
-## 4. Bugs found and fixed by differential testing
+## 1. Fortran → C translation (`srcc/`)
 
-Differential testing found three real translation defects that were invisible
-to inspection. All three are now fixed and covered by the tests above.
+WHAMP's interface is a line-oriented REPL whose exact column layout, separators,
+blank records and help texts are part of its observable behaviour, so "the same
+numbers" is not an acceptable acceptance criterion. Three rules made exact
+comparison possible:
 
-### 4.1 List-directed separator after a colon-terminated character item
+1. **One-to-one file mapping** — each `src/<name>.f90` becomes `srcc/<name>.c`,
+   same routines in the same order; Fortran `MODULE`s become
+   `comin`/`comcout`/`comoutput` `.h`/`.c` pairs.
+2. **A byte-exact gfortran format emulator** — instead of trusting `printf`,
+   `srcc/whamp.h` implements gfortran 6.3's field-generation rules for every
+   edit descriptor WHAMP uses: `fE()` (`1P…Ew.d` with gfortran's exponent
+   adjustment, round-half-even, `********` overflow), `fF()`, `fint()`, and
+   `ld_real/ld_int/ld_logical/ld_complex()` for list-directed records including
+   separator rules and `(re,im)` complex form. `F32()` reproduces the
+   single/double distinction.
+3. **Faithful control flow** — named `CYCLE`, labelled `GOTO`, `ENTRY`, `SAVE`
+   locals, implied-DO lists and trailing-`/` `FORMAT` semantics translated
+   explicitly rather than approximated.
 
-Fortran:
+Verification is differential: a reference binary is built with `gfortran -O2`
+from the untouched `src/`, both binaries are driven with identical arguments,
+working directory and piped stdin, and raw stdout bytes are compared. Because
+WHAMP loops forever on end-of-file (identically in both), the harness reads a
+bounded prefix and kills the process.
 
-```fortran
-write (*, *) 'Unknown output request:', IC
+**Result: 64 of 67 comparisons byte-identical** — the `doc/test.txt` acceptance
+session, all 19 output-format letters on two plasma models, `-debug` and
+`-maxiterations` paths, parameter overrides, grid edge cases, and the callable
+engine test.
+
+### Bugs differential testing found (invisible to inspection)
+
+* **List-directed separator after a colon-terminated character item.** Fortran
+  suppresses the separator; the C port printed an extra space.
+* **Trailing `/` in `FORMAT` emits an extra empty record.** Two places (`FORMAT
+  131` in `typin`, `FORMAT 105` in `output`) were missing a newline.
+* **`CYCLE output_format_loop` restarts the *outer* loop**, but had been
+  rendered as `continue` on the inner one — so after printing output help the C
+  program kept scanning the input string instead of re-prompting.
+
+Plus format-routing corrections: the `x` (phase) case needs `F8.2` editing (which
+prints ` NaN`, not MinGW's `1.#R`), and `p`/`z` need `F12.7`.
+
+### Known divergences (all ≤ 1 ULP, or undefined behaviour in the original)
+
+* **`Ex2` with `-debug`** — a 1-ULP seed in a case the solver never converges is
+  amplified to ~2×10⁻⁶ in the *debug trace* only; all final and physical output
+  is byte-identical. Isolated with two probes proving libm and C99 `_Complex`
+  arithmetic are bit-identical between the two front ends; the residual comes
+  from expression-level association, and is insensitive to `-O0…-O3` and
+  `-ffp-contract`.
+* **`R_negf`** — re-solve at `f = -0.1` diverges at iteration 4 where the
+  condition number is ~4.5×10⁶; final `X` differs by 8×10⁻¹⁶, twelve orders
+  inside the solver's own tolerance.
+* **Engine tests ET6–ET8** — `whamp_engine.f90` never initialises grid entries
+  the solver does not visit, so the Fortran prints denormal garbage that changes
+  between runs *of the same binary*. The C uses `calloc`, so those entries are
+  deterministically `0.0`.
+
+Not translated, deliberately: `src/wrfi.f90` (dead — no `CALL WRFI` anywhere)
+and `src/mexwhamp.F` (MATLAB gateway; superseded in phase 6).
+
+---
+
+## 2. Optimised variants (`srccopt/`, `srccopt64/`)
+
+* **`srccopt/`** — dead code removed, the Fortran edit-descriptor emulation
+  extracted into `fedit.c/.h`, `whamp.h` slimmed, argument parsing and record
+  reading rewritten with named helpers, and `ALLOC1`/`ALLOC2` collapsing 21
+  hand-written `free()` calls on error paths into one unwinding sequence.
+  **Byte-for-byte identical to `srcc/` on all 30 golden sessions.**
+* **`srccopt64/`** — the all-`double` experiment: every `F32(literal)` became a
+  plain literal, `typin.c`'s four `float` variables (the only single-precision
+  variables in the whole Fortran source) became `double`, and constants were
+  collected in `constants.h`.
+
+Both build warning-free at `-Wall -Wextra -O2` and at `-Wall -Wextra -Wpedantic`.
+Under the broadest set gcc 6.3 implements, diagnostics fall from 238 (`srcc/`)
+to 82 (`srccopt/`) to 72 (`srccopt64/`); the residue is `-Wfloat-equal` (48,
+inherent — Fortran compares reals with `==`) and `-Wdouble-promotion` (26,
+deliberate). Silencing them would mean changing behaviour.
+
+Against the authoritative oracle, `srcc/` and `srccopt/` differ on 3 of 25
+sessions (the pre-existing ULP residuals above); `srccopt64/` differs on 18,
+which is the float→double experiment.
+
+### 2.1 Single precision is load-bearing — a sweep silently loses its endpoint
+
+For the sweep `p0,.05,.01z.0022f.1`:
+
+| Build | Points emitted | Last p |
+|---|---|---|
+| `srcc/`, `srccopt/` | 5 | 0.0400000 |
+| `srccopt64/` | **6** | **0.0500000** |
+
+The original **drops the requested endpoint**. The loop advances while
+`PLG <= PM2`; with float rounding the accumulator reaches
+`0.049999998882412910` against a bound of `0.049999997019767761` and fails the
+test, while in double it lands exactly on the bound and succeeds. A sweep from 0
+to 0.05 in steps of 0.01 *should* have six points, so `srccopt64` is arguably
+more correct — and further from the reference. **Widening `float` to `double`
+changes program behaviour, not just its last digit.**
+
+### 2.2 The Fortran source disagrees with itself about π and about *c*
+
+`av.f90` uses a 14-digit π; `whamp_engine.f90`, `rasy.f90`, `rint.f90` and
+`output.f90` use a 15-digit one. `av.f90` uses `299.79` while `energy.f90` uses
+`299.792458`. `energy.c` scales the wave magnetic field by `1/c` and `av.c` then
+forms `|c·B|²/|E|²`, so the two uses must agree; the disagreement left that ratio
+wrong by 1.6×10⁻⁵.
+
+The π difference is provably output-safe (the 14-digit value only reached
+`POYN[]`, which the original computes and discards). The *c* difference is not:
+`enden=` is `Re(ERG·conj(ERG)/(ERG+conj(ERG)))·2 − ENFIELD`, two nearly equal
+terms, so a 1.6×10⁻⁵ change in `c²` becomes a **34 % change** in the printed
+value. Neither printed value is trustworthy — the original already destroys 4–5
+significant digits there. The exact SI `c` is used because it is *correct*, not
+because it is *stable*; `enden=` should not be quoted to more than one
+significant digit.
+
+### 2.3 A real mistranslation: complex `COS`/`SIN`/`EXP` lost their imaginary part
+
+`-Wconversion` reported five `discards imaginary component` warnings pointing at
+three statements present identically in all trees: `COT = cos(PI*Y)/sin(PI*Y)`
+in `rasy.c` and `rint.c`, and `Pv = exp(AL*C - Y*Xloc)` in `rint.c`. In every
+case the argument is complex, so Fortran's elemental `COS`/`SIN`/`EXP` return a
+complex value. C99 specifies type-generic macros that select the complex
+overload; **MinGW-w64 gcc 6.3.0 does not implement that**, so the argument is
+silently converted to `double`.
+
+It survived the original byte-for-byte verification, a 25-session golden suite,
+and review, because `RYLA` routes to `RASY`/`RINT` only for strongly damped
+waves and every case in the battery used the weakly damped `p0z.0022f.1`.
+Against the oracle on `heavy_damping` (`p2z.5f1.5`):
+
+| Build | Result |
+|---|---|
+| Fortran oracle | no convergence, `I= 51 IRK= 1` |
+| before the fix | `Local minima!`, converges at `I= 7` — a spurious root |
+| after the fix | **byte-identical to the oracle** |
+
+Fixed with explicit `ccos`/`csin`/`cexp` in all trees. `#include <tgmath.h>` was
+also built and is byte-identical, but was rejected because it would silently
+retype unrelated future calls. Every trig/exp/log/sqrt/pow call in all 18
+translation units was then audited against its argument's declared type: these
+three were the only ones receiving a complex argument.
+
+### 2.4 Coverage gap
+
+No golden session exercises `enden=` / `enfl_p=` / `enfl_z=`, and the
+`all_outputs` case prints only help text because its output string is rejected
+before use. The energy-output path in `av.c` is **untested in every tree**.
+
+### 2.5 Recommendation
+
+Use **`srccopt/`** where output must match the original WHAMP. Treat
+**`srccopt64/`** as an experiment — clean and self-consistent, but not closer to
+reference behaviour. **Enable `-Wconversion` on any port to a new toolchain**: it
+was the only warning class that caught a real defect, and `-Wall -Wextra` was
+clean both before and after the fix.
+
+---
+
+## 3. Pure MATLAB port (`srcm/whamp.m`)
+
+Refactored from 938 to 1129 lines (19 functions → 34); the increase is
+documentation and extracted helpers, not new behaviour. `solve_point` was split
+into `solve_point`/`dispersion_state`/`newton_root`/`evaluate_at` with named
+tolerances; the 14 file-scope predictor variables of the C engine became named
+fields of a `sweep` struct; the triplicated `DC` expression was collapsed;
+residue tables and Gauss–Legendre abscissae were hoisted into helpers.
+
+**Verification.** `whamp_dump.m` runs 30 cases and writes 21 fields at `%.20g`
+(2616 lines of golden text), covering both sweep orders, negative and
+logarithmic axes, three-species and loss-cone plasmas, ion drift, heavy damping,
+non-convergence, `kperp = 0` and `kpar = 0`, three magnetic fields, and all 7
+expected error identifiers. After 9 refactor batches the dump is **byte-identical
+to the baseline**, and it stayed so after each individual batch.
+
+Crucially the harness was anchored *outward* first: the pre-refactor code was
+compared against the real `srccopt64` transcripts and **9 of 9 comparable
+sessions matched**, the closest at **3.2×10⁻¹⁴** relative error. The refactor
+therefore preserves agreement with the reference program, not merely
+self-agreement. `checkcode` went from 7 warnings to 0.
+
+The conformance scripts caught a mistake *in the test*: a ~3×10⁻⁴ disagreement
+that looked like a numerical defect was a units error — `Models/Ex1` specifies a
+1 eV electron temperature, not `whamp.m`'s built-in 100 eV.
+
+### Deliberate divergences from the C reference
+
+All predate the refactor, are commented at the point of divergence, and are cases
+where the C behaviour is a memory-lifetime artifact rather than intended physics:
+
+1. **No cross-point state leakage.** The C engine keeps `D`, `DX`, `SG` in file
+   scope, so a failed point continues with values left by an unrelated earlier
+   point. `whamp.m` resets per point.
+2. **Heavily-damped points return immediately** (status 2) rather than carrying
+   on with a Newton step derived from stale globals.
+3. **Grid indices are clamped** to `[1, count]`; the C writes out of bounds for
+   negative steps.
+
+---
+
+## 4. Branch tracking, version 1 (`whamp_track`)
+
+### The symptom and its cause
+
+`whamp.m` sweeps `kpar` carrying one complex predictor. On a drift-unstable
+plasma the reported frequency leaps between distant modes and then rides the new
+branch — e.g. reporting 14.04, 28.10, 47.33, 71.42 where the true branch is flat
+at ≈0.97. Nothing flags it: **every one of those values is a genuine,
+well-converged root.**
+
+The cause is not a numerical defect. Multiple roots genuinely coexist at a
+single `(k⊥, k∥)`; `D(ω)` is meromorphic with one pole per species gyroharmonic;
+so a Newton step started near a pole lands in whichever basin it falls into.
+`roots()` needs a polynomial and `fzero` is real-only. **The fix must be a policy
+layer on top of the existing iteration, not a better iteration.**
+
+### The design
+
+Physics was mechanically extracted into `srcm/+whampkit/` (36 files) so every
+solver evaluates a bit-identical dispersion function; `whamp.m` was not modified
+and its regression still passes byte-for-byte. Three mechanisms:
+
+1. **Trust-region Newton** — retries confined to a disc centred on the *previous
+   root on this branch*, radius `trustFactor ×` the branch's recent step size.
+2. **Continuity check** — a converged root that moved more than `jumpFactor ×`
+   the branch step is rejected and the point retried.
+3. **Multi-start re-anchoring** — engine extrapolation, then previous root, then
+   scaled offsets; first candidate that converges *and* passes continuity wins.
+
+> **The decision that mattered: every scale is measured on the *branch*, never on
+> the extrapolated seed.** A bad seed is bad by roughly the size of the jump it
+> is about to cause, so any radius expressed in terms of the seed is circular —
+> it admits precisely the failure it is meant to catch. This single change took
+> the solver from ineffective to zero hops.
+
+The **first seed is tried with `radius = Inf`** — it *is* `whamp`'s solve. On a
+well-behaved line the machinery never engages.
+
+### Bugs found
+
+* **Trust-region Newton converging against the wall.** When the trust budget was
+  exhausted `limitStep` returned `correction = 0`, which passes the step-size
+  convergence test trivially — so the iteration "converged" while pinned against
+  the disc, recording residuals of order 10⁸–10¹⁰ as roots. Recognised by a
+  "root" appearing at *exactly* `trustFactor × scale`. Fixed by returning an
+  `exhausted` flag and requiring `~wasClamped`. **Any trust region must be able
+  to report that it bit.**
+* **A bug in the measurement.** `judge()` skipped any point the reference had not
+  converged to; on hard lines the reference dies early, so every baseline hop
+  beyond that was invisible and the baseline appeared to make zero hops. It now
+  reports `checked` and `skipped` alongside every count.
+* **Diagnostics accumulated only on success**, describing the easy points and
+  hiding the ones where the seed list was worked hardest.
+* **"Too heavily damped" was flattened into "did not converge"**, so
+  `flagTooHeavilyDamped` never fired. Fixed by asking the engine's own seed for
+  its status.
+
+### Result
+
+Nine sweep lines (three plasmas × `kperp` ∈ {0.005, 0.01, 0.02}), `h = 0.008`,
+reference at `h/8`:
+
+| Solver | Branch hops | Cost per line |
+|---|---|---|
+| `whamp` | **13** | ~0.1 s |
+| **`whamp_track`** | **0** | 0.5–1.9 s |
+| `whamp_global` | 7 | ~80–95 s |
+
+`whamp_track` reproduces the reference to **10⁻¹²–10⁻¹¹** where the baseline is
+off by 10¹–10². On the three well-behaved beam lines the two are indistinguishable.
+
+`whamp_global` (enumerate all roots per point, match by optimal assignment) is
+structurally more appealing and worse on both quality measures at ~800× the cost:
+in cold multi-species plasmas the susceptibility expansion fails over most of the
+complex plane, so the enumeration cannot sample the box reliably. Retained,
+marked **not recommended**, so the next person does not spend a week
+rediscovering why.
+
+**"Missing points" is not a quality metric** — a coverage count that rewards a
+solver for jumping onto a neighbouring branch is measuring the wrong thing.
+`flagSuspectBranch` is the honest version of the same information.
+
+---
+
+## 5. Tracking without hand-tuned scales (`whamp_track_v2`)
+
+> **Naming.** `whamp_track_test.m` is modular v1 (calls `+whampkit`);
+> `whamp_track.m` is self-contained v1; `whamp_track_v2.m` supersedes both.
+
+**Headline: v2 is the first solver in this tree that reports no branch hops *and*
+no unjudgeable points**, at 2.83 s against 3.02 s for self-contained v1 on the
+nine-line benchmark and **1.14× v1** on the large 2-D sweep that first exposed a
+real cost.
+
+| solver | hops | in range | past end | time |
+|---|---|---|---|---|
+| `whamp` | 13 | 42 | 19 | 0.75 s |
+| `whamp_track_test` (modular v1) | 0 | 56 | 19 | 7.74 s |
+| `whamp_track` (self-contained v1) | 0 | 56 | 19 | 3.02 s |
+| **`whamp_track_v2`** | **0** | **57** | **0** | **2.83 s** |
+
+### 5.1 Removing `relFloor` — and the trap in doing it
+
+`relFloor = 0.25·|x|` was v1's least principled number: on a flat branch the
+reference steps ~0.004 while the scale floored at 0.247, giving a jump tolerance
+of 1.48 — about 60× too large. v2 replaces it with the exact implicit step
+
+$$\Delta x = -\frac{(p-p_0)D_P + (z-z_0)D_Z}{D_x}$$
+
+which `dispersion.m` already returns for the group velocity. The only remaining
+floor is `sqrt(eps)·|x|`, which is not a knob but the statement that a step below
+the root's own round-off cannot be resolved. Median tolerance on the flat branch
+falls from 1.48 to 0.047, roughly 30× tighter.
+
+Three findings came out of this, each more useful than the change itself:
+
+* **Sizing a continuity tolerance from a prediction is circular.** Doing the
+  obvious thing — sizing the *rejection* threshold from the prediction's own
+  recent error — reproduced the baseline's **13 hops exactly**. A tolerance
+  derived from the prediction is an allowance for the prediction being wrong; if
+  it is wrong because the branch is about to be lost, the tolerance widens by
+  exactly enough to forgive losing it. v2 sizes the tolerance from the *step the
+  branch actually took*, which is an observation, not a restatement.
+* **`dispersion.m` reports `DP = 0` and `DZ = 0` on the axis planes**, for its own
+  `1/k` reasons — and every sweep line in the suite starts at `kpar = 0`, where
+  the branch genuinely moves by a factor of 2.4. A zero derivative is the
+  *absence* of a prediction, not a prediction of no movement. `local_predict`
+  therefore returns an `informative` flag and falls back to the grid anchor.
+  Suppressing the prediction entirely also failed — it let v2 accept the engine's
+  hop, because with no prediction there is nothing for continuity to disagree
+  with.
+* **The model residual `|root − prediction|` is the wrong yardstick.** On a
+  completely clean line it grows from 3·10⁻⁴ to 0.11 purely from local curvature,
+  producing 7 false suspect flags. A *step* is the right yardstick, because a hop
+  lands a branch-spacing away while curvature stays small compared with one step.
+  v2 measures the rate `|dx|/|dk|`.
+
+### 5.2 Certification by the argument principle
+
+Every accepted root is certified by a winding-number count of `D` around a small
+circle — an adaptive polygon starting at 8 samples, with **no residual threshold
+anywhere**. Since `D` is meromorphic the count is `Z − P`: `+1` is a simple zero
+and the root is real; `0` means the reported point is **not a root at all**; `−1`
+means it sits on a species gyroharmonic. This works precisely where a residual
+test cannot, because `|D|` ranges over ~30 orders of magnitude while the winding
+number is scale-free. On the regression line **99 of 99 accepted roots certify as
+`+1`**. Certification is not a lower bound — it is a direct statement about each
+root, independent of any reference, which removes the caveat from the per-point
+claim. Three separate flags keep "wrong branch", "not a root" and "unknown" apart.
+
+### 5.3 The fold, and why v1's extra coverage was not coverage
+
+Walking the branch at 32× resolution showed that on the anisotropic plasma at
+`kperp = 0.005` the tracked branch **terminates in a fold at `kpar ≈ 0.0425`**,
+where `dx/dkpar → 0` and `x` plateaus at 0.970741. Past it there is no root
+connected to this branch.
+
+The step-refined reference is itself a continuation and dies at the same place, so
+points beyond it are not "hard points the reference failed on" — they are points
+refinement *cannot judge at all*. v1 reports 4 points past the fold, which are
+necessarily on another branch, reached because `relFloor` kept the tolerance wide
+enough for a lucky scan-offset seed; v1's own continuity check cannot object
+because the floor calibrates the check. `pastEnd` is therefore reported as a
+first-class metric, and it is the number v2 takes to zero. **Removing `relFloor`
+did not lose coverage; it declined a claim that was never earned — and gained one
+point of genuine coverage (57 vs 56).**
+
+### 5.4 Two-dimensional sweeps: the item listed as a test found the real bug
+
+v1 keeps its step history in **visit order**. On a genuine 2-D sweep the
+previously visited point at the start of a new line sits at the far end of the
+previous line, at a completely different wave number — so the first point of
+every line after the first is judged against a step between unrelated points.
+With grid anchoring alone, `varyKzFirst = 0` gave first-column roots
+`0.409 0.878 12.55 26.58 45.82 69.96` with 17 suspect flags, and the two sweep
+orderings disagreed by **7.6×10¹**. Two causes:
+
+* **Pooling steps across axes.** The branch moves ~70× faster in `kpar` than in
+  `kperp`, so a pooled scale was meaningless on one axis. Fixed by a **rate per
+  axis**, with `dk = |p − p₀| + |z − z₀|` — a symmetric form needing no knowledge
+  of which axis varies (assuming the inner axis was always `kperp` fixed one
+  ordering and broke the other).
+* **A windowed median is not a local rate.** One point came out as `0.4887` where
+  the true root is `0.9046`. A full root scan at every grid point proved
+  `0.48871` **is not a root at all**. The tolerance was too wide because a median
+  over a *visit-order window* was drawn from the flat tail of the previous line
+  (`dx/dkpar ≈ 0.06`) while the point being entered sat near `kpar = 0`
+  (`dx/dkpar ≈ 57`). **A window in visit order is not a neighbourhood in the
+  grid.** Fixed by a local rate map `rateMap(ip, iz, axis)` with Manhattan-ring
+  lookup.
+
+Result: both orderings agree to **3.19×10⁻¹¹** over 24 common points, 2-D sweeps
+match single-line runs **exactly**, and 1-D results are bit-identical to v1.
+
+### 5.5 `whamp_track_plot.m`
+
+Draws a dispersion diagram on which branch confidence is visible: filled dot =
+found and certified, open circle = not certified, grey square = certification
+unavailable, red ✗ = suspect branch, dashed overlay = the implicit prediction
+against the accepted root. Gaps are never bridged (`'LineStyle','none'`). Two
+orientation facts cost more time than the plotting: **the tracker returns arrays
+as (kpar × kperp)**, so a fixed-`kperp` curve is a *column*, and the helper's
+field accessor must apply the same transpose as `f` or the flags silently
+describe the wrong points.
+
+### 5.6 Performance: v2 was reported ~10× slower, and why
+
+Three causes. **The first two were real fixes to real pathologies found by
+profiling the wrong workload, and neither helped the reported case at all.**
+
+1. **An expanding-ring search that was only linear when the map was full.** The
+   rate-map lookup walked ring by ring bounded by the whole grid, so on an axis
+   with *no* recorded rates — the leading edge of a sweep — every lookup
+   exhausted every ring: `O(N²)` per lookup. On a 201×201 map, 0.926 ms per
+   lookup at 0% fill against 0.157 ms for the hybrid replacement (ring out to a
+   cap of 8, then one vectorised minimum-distance scan over occupied cells — a
+   *complete* search, so the cap is a fast path, not an approximation). Cost
+   tracks distance to the nearest hit, which a real sweep does not control.
+   Verified with 8000 randomised lookups against the original walk: 0 mismatches.
+2. **The certification contour was fixed at 33 samples of order-2 `D`.** Order 1
+   suffices (checked bit-identical in `D` and `IERR` at 40 random states; order 0
+   is *not* usable — the susceptibility is never accumulated and `D` comes out as
+   garbage). An adaptive contour starting at 8 samples and doubling while the
+   largest phase step exceeds π/2 resolves 98% of certifications on the first
+   pass, cutting mean evaluations from 32.63 to 9.12. The start of 8 was chosen by
+   measurement: starts of 4 and 6 occasionally under-resolve against a fixed-32
+   reference. 267 cases at the shipped setting: 0 mismatches.
+3. **The actual cost was certification itself: nine full evaluations of `D` per
+   root.** On the user's case — a 100×100 2-D whistler sweep — v2 was 2.0× v1,
+   and with `certify = false` it was *faster than v1*. Certification was 56% of
+   runtime. Over 876 real certified roots the contour resolved at 8 samples 100%
+   of the time, so there was nothing left in the adaptive loop: the cost was
+   irreducibly nine scalar `D` evaluations, each rebuilding the state and running
+   the eight-pole sum from scratch.
+
+   The fix evaluates the whole contour in **one vectorised pass**, since a contour
+   is eight or sixteen frequencies at a single shared `(p, z)`. Two things were
+   needed to make it pay: freezing converged Taylor samples **by masking rather
+   than indexing** (the logical-indexed version was *slower than the scalar loop
+   it replaced*, 0.97×; writing the freeze as a zeroed term with a substituted
+   harmless denominator is bit-identical and cost four elementwise products,
+   taking it to 2.52×), and **stacking all eight poles into one call** (pole-major
+   in one 72-element row; grouping cannot change the result because each sample's
+   series advances independently). Result on the user's case, interleaved:
+
+   | solver | best |
+   |---|---|
+   | `whamp` | 18.03 s |
+   | `whamp_track` (v1) | 21.42 s |
+   | v2, `certify = false` | 21.97 s |
+   | **v2, `certify = true`** | **24.49 s** |
+
+   v2 went from 2.0× v1 to **1.14× v1**, and certification from 56% of runtime to
+   ~10%, **bit-identically** over 12 564 compared values of `D` and `IERR`.
+
+An earlier non-interleaved run appeared to show 16 contour samples being *cheaper*
+than 8, which would have implied the adaptive loop cost more than it saved. It was
+machine drift charged to whichever configuration ran first; interleaved over four
+repetitions the ordering is monotone. **The methodological lesson: a benchmark on
+a small converged example cannot see a shape-dependent bug — *and* fixing the
+shape-dependent bugs still does not license a claim about total cost. The workload
+that prompted the complaint has to be the one that is measured.**
+
+### 5.7 A pre-existing non-termination bug, deliberately not fixed
+
+`whampkit.axis_spec` accepts a degenerate axis `[v 0 v]` (start = end, step 0) and
+`fill_axis` correctly returns a single-point axis. But `advance_sweep` walks the
+outer axis by repeated addition of the step, so with a zero step the position
+never changes and the termination test stays true forever. `whamp.m` loops forever
+with no message; the three track solvers carry a `guard > 200000` backstop and
+raise `Runaway` after tens of minutes. Writing a single `kperp` as
+`[0.005 0 0.005]` instead of `0.005` is enough to trigger it. The fix is one line
+in shared code and is **deliberately not made**, because every claim in this
+report rests on `whamp.m` being byte-identical; it should be a separate change
+with the engine's own tests.
+
+---
+
+## 6. C back-port: tracker and `mexwrap` MEX gateway
+
+`src/mexwhamp.F` had never been ported. It is now reimplemented in C as
+`mexwrap.c`, exposing exactly the struct interface the MATLAB code uses:
+
+```matlab
+Output = mexwrap(PlasmaModel, InputParameters)          % optionally (…, Options)
 ```
 
-In list-directed output, a character item that ends with `:` suppresses the
-following separator, and a character item never receives a separator after
-another character item. The correct output is ` Unknown output request:=` with
-**no** space before the character. The C port had
-`printf(" Unknown output request: %c", IC)`. Fixed in
-[output.c](srcc/output.c) to `printf(" Unknown output request:%c\n", IC)`.
+`PlasmaModel` needs `B` and `Species`; `InputParameters` needs `fstart`, `kperp`,
+`kpar`, `useLog`, with `varyKzFirst` and `maxIterations` optional. The output
+struct carries `kperp`, `kpar`, the 16 result arrays (`f`, `Ex`…`u`), and the
+flags `flagSolutionFound`, `flagTooHeavilyDamped`, `flagNoConvergence`,
+`flagSuspectBranch`, `certWinding`, `flagNotCertified`, `flagCertUnknown`, plus
+`predicted` and `diagnostics`. `matlab/mexwrap.m` is a shim that locates the
+built MEX.
 
-### 4.2 Empty records produced by trailing `/` in FORMAT statements
+The tracker itself is `whamp_track.c` / `whamp_track.h` with shared declarations
+in `comtrack.h`; callers configure the existing `comin` globals as for
+`whamp_engine()`, optionally call `track_options_default()`, then call
+`whamp_track_v2()`. It writes the existing `comoutput` arrays. The original engine
+entry points are unchanged — callers opt in.
 
-A Fortran `FORMAT` ending in `/` terminates the current record *and emits one
-additional empty record*; one ending in `//)` emits a blank record plus the
-terminator. Two places were affected:
+**Ported to all four C trees** — `srccopt64`, `srcc64`, `srccopt`, `srcc` — for
+parity. Two subtleties had to be handled:
 
-* `FORMAT 131` in `typin.f90` ends `'/)` — the help text is followed by a blank
-  line. Added the missing `printf("\n")` at the end of `print_help()` in
-  [typin.c](srcc/typin.c).
-* `FORMAT 105` in `output.f90` contains a mid-format `//` (after
-  `' … string of letters:'`) and ends `//)`. Added `printf("\n")` at the
-  mid-format double slash and `printf("\n\n")` at the end in
-  [output.c](srcc/output.c).
+* **`PI` collision.** `srcc` and `srccopt` declare file-scope `static const double
+  PI` in five files, so a shared `PI` macro would make those declarations
+  ill-formed. Their `constants.h` omits `PI` and the tracker uses a file-local
+  `TR_PI`.
+* **The tracker must match *its own* engine.** The bit-for-bit trees emulate
+  gfortran with `F32()`, so their engine uses single-rounded `1836.1`, `1e-6` and
+  `1e-5`. With plain-double constants the tracker and engine computed *different
+  dispersion functions* and disagreed about the root. In `srcc/constants.h` and
+  `srccopt/constants.h` these are therefore defined via `((double)(float)...)`;
+  the all-double trees keep them unrounded, matching `whamp_track_v2.m`.
+  `DEBYE_KM` (12405) and `ELECTRON_REST_ENERGY_KEV` (511) are exactly
+  representable in single and are written plain in every tree.
 
-### 4.3 `CYCLE output_format_loop` restarts the *outer* loop
+**Verification.** `whamp_track_test` checks both 2-D sweep orders, winding
+certification, and exact agreement with the legacy engine's first root; it passes
+in all four trees. `whamp_track_dump` prints each case's arrays at `%.17g` for
+comparison against MATLAB by `srcm/whamp_track_v2_vs_c.m`, whose **14 cases all
+MATCH (worst relative deviation 2.834×10⁻¹²) with every flag matching exactly**.
+Dump output is byte-identical between `srcc64` and `srccopt64`. `srcc` and
+`srccopt` differ on 9 of 14 cases — a pre-existing difference between the two
+bit-for-bit trees, not a tracker issue: `srccopt` applies `F32()` at two sites
+`srcc` does not, one of them a routing threshold in `xsi.c` that selects the
+integration path (and they use different input-editing helpers, `ctof.c` versus
+`fedit.c`). Each tree's tracker agrees exactly with its own engine, which is what
+`whamp_track_test` asserts. All four MEX builds return identical results on a
+common problem.
 
-```fortran
-output_format_loop: do
-   …
-   DO K = 1, 20
-      select case (IC)
-      case ('H', 'h', '?')
-         PRINT 105
-         cycle output_format_loop   ! <-- restarts the NAMED (outer) loop
-```
+Two divergences this comparison found were fixed in `whamp_track.c`:
+`tr_predecessor` now walks back at most 64 cells along the outer axis as
+`local_predecessor` does, and `tr_winding` returns the half-integer-resolved
+winding on an early resolved contour instead of rounding it. Neither is reachable
+on the 14 cases, which is why both were invisible to the flag comparison; they
+matter on grids wider than 65 cells and for contours whose phase lands on a
+half-integer.
 
-The C port used `continue`, which restarts the inner `K` loop instead — so
-after printing the output help the C program continued scanning the rest of the
-input string rather than re-prompting `#OUTPUT:`. Fixed with an explicit
-`restartFormatLoop` flag + `break` + outer `continue` in
-[output.c](srcc/output.c).
-
-### 4.4 Format-specifier routing corrections
-
-Additional (smaller) corrections found by the letter sweep:
-
-* the `x` (phase) case must use `F8.2` editing — which prints ` NaN` for a
-  non-finite argument — and not raw `%8.2f` (which prints `1.#R` on MinGW);
-* the `p` and `z` cases must use `F12.7` editing rather than the generic real
-  formatter.
-
----
-
-## 5. Known divergences (all ≤ 1 ULP, or undefined behaviour in the original)
-
-### 5.1 `Ex2` with `-debug`: 1-ULP seed amplified by a non-convergent iteration
-
-`X2_dbg` differs at one printed digit of an intermediate `D` value
-(`…8383661.12` vs `…8383661.16`, a relative difference of 1.8 × 10⁻¹⁶ = 1 ULP).
-Investigation:
-
-* The seed is a single ULP in the START-line `D` imaginary part.
-* Ex2 is a case the solver **never converges** (it terminates with
-  `NO CONVERGENCE!`). Over ~10 Newton steps the 1-ULP seed is amplified by the
-  iteration's own conditioning to ≈ 2 × 10⁻⁶ — i.e. it moves the 8th printed
-  digit of the *debug trace* only.
-* All **final** and **physical** outputs for Ex2 (T1, T2, and all 19 output
-  letters) are byte-identical.
-
-Root cause was isolated by two dedicated probes:
-`fortran_ref/probe21.{f90,c}` compares `exp`/`log`/`sin`/`cos` bit-for-bit
-between gfortran 6.3 and gcc 6.3 (identical), and
-`fortran_ref/probe22b.{f90,f90}` compares C99 `_Complex` multiply/divide with
-Fortran complex arithmetic (identical). The residual ULP therefore comes from
-expression-level association/contraction choices made independently by the two
-front ends; it is insensitive to `-O0/-O1/-O2/-O3/-Ofast` and to
-`-ffp-contract=off|fast`. Per the agreed tolerance, a one-ULP difference is
-acceptable.
-
-### 5.2 `R_negf`: ill-conditioned re-solve
-
-Re-solving at `f = -0.1` after a converged solve agrees byte-for-byte for
-iterations 1–3 and diverges at iteration 4, where `|D| ≈ 10¹⁶` with
-`|DX| ≈ 4 × 10²⁴` (condition number ≈ 4.5 × 10⁶). The solver accepts the step
-via its **absolute** criterion `|CX| < 10⁻⁶`; the final reported `X` differs by
-8 × 10⁻¹⁶ — twelve orders of magnitude inside the solver's own tolerance. This
-is a 1-ULP-class artefact of an ill-conditioned iteration, not a translation
-error.
-
-### 5.3 Engine test ET6/ET7/ET8: uninitialised memory in the original
-
-`whamp_engine.f90` `allocate()`s `fOUT`, `ExOUT`, … but initialises only the
-three flag integers. Grid points that the solver never visits are therefore
-**never written**, and the test driver prints them. Fortran consequently prints
-denormal garbage that changes from run to run of the *same* Fortran binary
-(observed: `8.42E-317`, `7.77E-317`, `8.16E-317`). This is genuine undefined
-behaviour in the original program, so no C translation can reproduce it. The C
-version uses `calloc`, so those entries are deterministically `0.0` — strictly
-better defined, and every *written* entry matches.
+The Poynting flux and `SGP`/`SGZ` need a yardstick other than the array's own
+magnitude — they are differences of nearly cancelling products, where a
+per-cell ratio reads a difference of 1e-17 as a relative error of one. They are
+instead judged by whether the gap could have come from the inputs they are
+computed from (`|dS| ≤ |dE||B| + |E||dB| + 2ε|E||B|`); the bound holds
+everywhere, so the difference is inherited from the fields, not a logic divergence.
 
 ---
 
-## 6. Compiler diagnostics
+## 7. Findings that generalise
 
-`gcc -Wall -O2` produces only warnings that mirror the original Fortran's own
-looseness and have no effect on output (verified by the byte-identical results):
-
-* `label 'loop_typin' / 'loop_plasma_update' defined but not used` — labels
-  retained from Fortran `CONTINUE`/`GOTO` targets kept for traceability;
-* `'LoopI' defined but not used` — a Fortran `INTEGER` declaration carried over
-  verbatim;
-* `'T' may be used uninitialized` ([rasy.c](srcc/rasy.c)),
-  `'DEK'/'DEC' may be used uninitialized` ([typin.c](srcc/typin.c)) — the same
-  latent uninitialised reads exist in `rasy.f90` / `typin.f90`; gfortran does
-  not warn at `-Wall` but the values are read identically;
-* `variable 'POYN'/'U13' set but not used` ([av.c](srcc/av.c)) — dead
-  assignments present in `av.f90`.
+1. **Rounding behaviour *is* behaviour.** Replacing `float` with `double` is not
+   a cleanup — it is a change of program, justified by evidence like any other.
+2. **`-Wall -Wextra` was clean before and after the only real bug found in the
+   whole exercise.** `-Wconversion` caught it. Treat warnings as part of
+   verification, not housekeeping — especially on a toolchain that does not
+   implement C99 type-generic `math.h`.
+3. **Differential testing finds what inspection misses** — three control-flow and
+   formatting defects in phase 1, and the complex-trig defect only because no
+   test in the battery reached the affected code path.
+4. **Any trust region must be able to report that it bit.** A cap that silently
+   shrinks a step to zero turns a step-size convergence test into a test of the
+   cap, and reports the wall of its own disc as a root.
+5. **Report the denominator alongside the count.** A harness that quietly skips
+   unjudgeable points makes the baseline look perfect on the hardest line.
+6. **Sizing a continuity tolerance from a prediction is circular** — the tolerance
+   forgives exactly the error it is meant to catch. Measure against the branch.
+7. **A derivative reported as zero for the convenience of the code computing it
+   is not a prediction of zero.**
+8. **A window in visit order is not a neighbourhood in the grid.**
+9. **Coverage counts are not quality metrics** when a solver can earn them by
+   jumping branches.
+10. **Benchmark the workload that prompted the complaint.** Two genuine
+    pathologies were found by profiling the wrong one, and fixing both changed
+    nothing about the reported cost.
 
 ---
 
-## 7. File structure
+## 8. Open items
 
-### Top level
+1. Predict the branch rate per grid cell in a cheap preliminary pass rather than
+   recording it from the step that already succeeded — should remove the four
+   remaining suspect points under `varyKzFirst = 1`.
+2. Let `+whampkit/dispersion.m` report `DP`/`DZ` on the axis planes by a one-sided
+   stencil, or return an explicit "not available" flag.
+3. Make the reference fold-aware (continue in `(x, k)` through a turning point) so
+   the region past `kpar ≈ 0.0425` becomes judgeable.
+4. Fix the degenerate `[v 0 v]` axis non-termination — as a separate change with
+   the engine's own tests, since it alters `whamp.m`.
+5. Close the `av.c` energy-output coverage gap (`enden=`, `enfl_p=`, `enfl_z=`)
+   before touching that file again.
+6. Decide the sweep-endpoint question of §2.1 explicitly rather than by rounding
+   accident.
+7. Port the tracker to the Fortran engine, which still carries the original
+   single-seed defect.
+8. Wire `whamp_verify` and the golden suites into CI so a MATLAB edit is gated the
+   same way a C edit is.
+9. Consider whether four near-duplicate C trees (`srcc`, `srcc64`, `srccopt`,
+   `srccopt64`) are worth their long-term maintenance cost now that the
+   diagnostic value of the experiment has been extracted.
+
+---
+
+## 9. Layout and reproduction
 
 ```
 whamp/
-├── .gitattributes
-├── .gitignore
-├── CITATION.cff
-├── README.md
-├── REPORT.md                        <- this report
-├── SECURITY.md
-├── WHAMP_Report_1982.pdf
-├── .github/
-├── Archive/
-├── Models/                          <- plasma model files (Ex1, Ex2, …)
-├── doc/                             <- documentation, incl. test.txt (acceptance spec)
-├── matlab/
-├── src/                             <- ORIGINAL Fortran (read-only reference)
-├── srcc/                            <- C translation
-└── fortran_ref/                     <- test harness + gfortran reference builds
+├── src/            ORIGINAL Fortran 90 (read-only reference, 19 files)
+├── srcc/           C translation, bit-for-bit (F32 emulation, ctof.c)
+├── srccopt/        tidied + optimised, byte-exact with srcc/ (fedit.c)
+├── srcc64/         all-double + tidied; near-identical to srccopt64
+├── srccopt64/      all-double + tidied; the validated tracker/MEX reference
+├── srcm/           pure MATLAB: whamp.m, whamp_track{,_test,_v2}.m, +whampkit/
+├── matlab/         MATLAB front end, mexwrap.m shim
+├── fortran_ref/    gfortran oracle + differential harness
+├── tools_golden/   30-session golden suites (golden/, golden64/)
+├── Models/         plasma model files (Ex1, Ex2, …)
+└── doc/            documentation, incl. test.txt (acceptance spec)
 ```
 
-### `src/` — original Fortran (20 files, unmodified)
-
-```
-src/
-├── Makefile               45     OBJS / OBJSTEST / OBJSLIB targets
-├── README.md              63
-├── Example_Input_File      9
-├── mexwhamp.F            206     MATLAB MEX gateway (not part of the CLI build)
-├── whamp.f90             313     main program: CLI parsing, REPL driver
-├── typin.f90             319     TYPIN parameter parser + help (FORMAT 131)
-├── output.f90            181     OUTPT / INOUT output-format engine
-├── xsi.f90               154     XSI: cold/warm plasma susceptibility
-├── av.f90                160     AV: wave energy & flux per species ('y')
-├── energy.f90             99     ENERGY: total wave energy
-├── difu.f90              131     DIFU: derivatives of the dielectric tensor
-├── rint.f90              106     RINT: numerical integration over species
-├── rasy.f90               50     RASY: asymptotic (resonant) integrals
-├── rtay.f90               29     RTAY: Taylor-expansion integrals
-├── ryla.f90               29     RYLA: Laguerre-polynomial integrals
-├── input.f90              32     INPUT: model-file reader
-├── ctof.f90               20     CTOF: string → real conversion
-├── comin.f90              30     MODULE comin    (input common block)
-├── comcout.f90            19     MODULE comcout  (output common block)
-├── comoutput.f90          27     MODULE comoutput (engine output arrays)
-├── whamp_engine.f90      346     callable library entry point
-├── whamp_engine_test.f90 113     engine test driver
-└── wrfi.f90              132     WRFI: binary/ASCII output writer (dead code —
-                                  never CALLed by any program in src/)
-```
-
-### `srcc/` — C translation (22 source files, 3 171 lines)
-
-```
-srcc/
-├── Makefile               43     mirrors src/Makefile: whamp, libwhamp.a,
-│                                 whamp_engine_test (same object lists)
-│
-│   -- format emulator / runtime support (new; no Fortran counterpart) --
-├── whamp.h               253     fE(), fF(), fint(), ld_real/ld_int/
-│                                 ld_logical/ld_complex(), F32(), cd/rd decls
-│
-│   -- modules (from MODULE …) --
-├── comin.h                 29    ┐
-├── comin.c                 24    ┘ MODULE comin
-├── comcout.h               19    ┐
-├── comcout.c               16    ┘ MODULE comcout
-├── comoutput.h             48    ┐
-├── comoutput.c             24    ┘ MODULE comoutput
-│
-│   -- routines (1:1 with the .f90 files) --
-├── whamp.c                484    <- whamp.f90
-├── typin.c                372    <- typin.f90
-├── output.c               386    <- output.f90
-├── xsi.c                  164    <- xsi.f90
-├── av.c                   164    <- av.f90
-├── difu.c                 137    <- difu.f90
-├── rint.c                 110    <- rint.f90
-├── energy.c                86    <- energy.f90
-├── rasy.c                  59    <- rasy.f90
-├── input.c                 56    <- input.f90
-├── rtay.c                  36    <- rtay.f90
-├── ryla.c                  31    <- ryla.f90
-├── ctof.c                  24    <- ctof.f90
-├── whamp_engine.c         389    <- whamp_engine.f90
-├── whamp_engine_test.c    260    <- whamp_engine_test.f90
-│
-│   -- built binaries --
-├── whamp_c.exe                    main program (gfortran oracle: ../fortran_ref/whamp_ref.exe)
-└── whamp_engine_test_c.exe        engine test driver
-```
-
-Not translated, deliberately:
-
-* `src/wrfi.f90` — `SUBROUTINE WRFI` is not referenced by any program or
-  routine in `src/` (verified by searching for `CALL WRFI`); it is dead code,
-  so it is absent from both `src/Makefile`'s object lists and `srcc/`.
-* `src/mexwhamp.F` — the MATLAB MEX gateway; it depends on the MATLAB headers
-  and is not part of the command-line build.
-
-### `fortran_ref/` — verification harness
-
-```
-fortran_ref/
-├── whamp_ref.exe                     gfortran build of untouched src/
-├── engtest/whamp_engine_test_ref.exe gfortran build of the engine test
-├── runcase.ps1        run one binary, capture raw stdout bytes
-├── battery2.ps1       run the full 61-case matrix and byte-compare
-├── cmpcase.ps1 / cmpcase2.ps1        compare one case (with -Model)
-├── cmpprefix.ps1      bounded-prefix compare (EOF-looping cases)
-├── cmpeng.ps1         engine-test compare
-├── ulp.ps1            max relative difference between two outputs
-├── ulpgrow.ps1        per-line divergence growth (ULP amplification trace)
-├── probe21.f90 / .c   libm bit-identity probe (exp/log/sin/cos)
-└── probe22b.f90 / probe22.c   C99 _Complex vs Fortran complex probe
-```
-
----
-
-## 8. How to reproduce
+Each C tree builds with `mingw32-make` (`make` is not on PATH) and exposes
+`all`, `whamp_track_test`, `whamp_track_dump` and `mexwrap`. `make clean` uses
+`rm` and does not work on Windows; use `git clean -fdX`.
 
 ```powershell
-$env:Path = "C:\MinGW\bin;" + $env:Path
+# C: build a tree and run its tracker self-test
+cd srccopt64 ; C:\MinGW\bin\mingw32-make.exe all whamp_track_test whamp_track_dump
+.\whamp_track_test.exe            # exit 0 on success
 
-# 1. Build the C translation
-cd c:\Users\WP\VSCODE\whamp\srcc
-gcc -c -Wall -O2 whamp.c energy.c rint.c rtay.c xsi.c output.c ryla.c rasy.c `
-    typin.c difu.c input.c ctof.c av.c comin.c comcout.c
-gcc whamp.o energy.o rint.o rtay.o xsi.o output.o ryla.o rasy.o typin.o difu.o `
-    input.o ctof.o av.o comin.o comcout.o -lm -o whamp_c.exe
+# C MEX (must be run from inside the tree)
+& 'C:\Program Files\Polyspace\R2020b\bin\mex.bat' -O -R2017b mexwrap.c libwhamp.a
 
-# 2. Build the Fortran reference from the untouched src/
-#    (copy src to a scratch directory so src/ stays free of build artefacts,
-#     and compile the MODULE files first)
-cd <scratch>
-copy c:\Users\WP\VSCODE\whamp\src\*.f90 .
-gfortran -O2 -c comcout.f90 comin.f90
-gfortran -O2 -c energy.f90 rint.f90 rtay.f90 xsi.f90 output.f90 ryla.f90 rasy.f90 `
-    typin.f90 difu.f90 whamp.f90 input.f90 ctof.f90 av.f90
-gfortran energy.o rint.o rtay.o xsi.o output.o ryla.o rasy.o typin.o difu.o `
-    whamp.o input.o ctof.o av.o comin.o comcout.o -lm -o whamp_ref.exe
+# Tracker vs the MATLAB reference (14 cases; driver path is srccopt64)
+& matlab.exe -batch "cd srcm; addpath(pwd); whamp_track_v2_vs_c"
 
-# 3. Run the full differential battery
-powershell -ExecutionPolicy Bypass -File ..\fortran_ref\battery2.ps1
+# MATLAB regression and conformance
+& matlab.exe -batch "addpath('srcm'); whamp_verify('baseline.txt')"
+& matlab.exe -batch "addpath('srcm'); whamp_vs_repl_golden; whamp_vs_srccopt64"
+
+# Golden suites (exit 1 on any difference)
+powershell -ExecutionPolicy Bypass -File tools_golden\run_cases.ps1 `
+    -Exe srccopt\whamp.exe -Cases tools_golden\cases.json `
+    -OutDir tools_golden\actual -CompareDir tools_golden\golden
+
+# Branch-tracking benchmark (nine sweep lines)
+& matlab.exe -batch "addpath('srcm'); compareExample"
 ```
+
+The oracle must be built with `-O2`; `src/Makefile` omits it and yields a
+different binary. The tracking harnesses (`verify_*`, `bench_*`, `eval_*`,
+`diag_*`) live in the session workspace alongside the v2 head file and the
+assembler, and are not part of the tracked tree.
 
 ---
 
-## 9. Conclusion
+## 10. What is claimed, and what is not
 
-The C translation in `srcc/` reproduces the Fortran program in `src/`
-**byte-for-byte** on the `doc/test.txt` acceptance session, on all 19 output
-format letters across two plasma models, on the `-debug` and
-`-maxiterations` code paths, on the parameter-override and grid-control edge
-cases, and on the callable-library engine test. Three genuine translation
-defects were found and fixed by differential testing. The only residual
-differences are single-ULP perturbations in intermediate values of iterations
-that are either non-convergent or ill-conditioned (which the user has accepted
-as an acceptable difference), and values that are uninitialised — i.e.
-undefined — in the original Fortran.
+**Claimed.** `srccopt/` reproduces `srcc/` byte-for-byte on 30 sessions and the
+documented acceptance test exactly. `srcm/whamp.m` produces byte-identical output
+to its pre-refactor state across 30 cases and 21 fields at full precision, and
+that state matches `srccopt64` on all 9 comparable golden sessions. Over nine
+sweep lines spanning three multi-species plasmas and three perpendicular
+wavenumbers, `whamp_track_v2` records **0 branch hops and 0 points beyond the
+reference's reach** where `whamp.m` records 13 and 19; every accepted root it
+reports is independently certified as a simple root of `D`; it agrees with itself
+across sweep orderings to 3·10⁻¹¹; and it contains no hand-tuned scale. The
+tracker and `mexwrap` build and self-test in all four C trees, and the tracker
+matches the MATLAB reference on 14 cases with every flag identical. `whamp.m` is
+byte-identical to its pre-work state and both v1 builds are unchanged in
+behaviour.
+
+**Not claimed.** That zero hops holds generally — three plasmas and three `kperp`
+values are not a proof, and the *comparison* between solvers still rests on a
+reference that stops at the fold. That `srccopt64` matches the original (it does
+not, in two specific documented ways). That the golden suites are complete — §2.3
+and §2.4 are direct evidence that they are not. That the residual oracle
+differences are understood beyond being ULP-level and pre-existing. That the
+MATLAB port is a faithful reference for the Fortran original — it is a faithful
+reference for `srccopt64`. And that anything is fixed for users of the Fortran
+engine, which still carries the original single-seed defect.

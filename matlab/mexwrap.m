@@ -20,7 +20,7 @@ function varargout = mexwrap(varargin)
 %
 %   srccopt64 is the all-double engine variant.  The same wrapper can be built
 %   in ../srccopt for the variant that reproduces the Fortran reference
-%   bit-for-bit; see ../REPORT64.md.  If both are built, the one that appears
+%   bit-for-bit; see ../REPORT.md, section 2.  If both are built, the one that appears
 %   first on the MATLAB path is used.
 %
 %   See also WHAMP, WHAMP/RUN.
