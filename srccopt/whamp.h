@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "constants.h"
 #include "fedit.h"
 
 /* Number of plasma components WHAMP keeps track of (Fortran arrays 1..10). */

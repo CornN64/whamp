@@ -20,6 +20,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "constants.h"
+
 typedef double complex cd;
 
 /* Fortran unsuffixed real literals (e.g. 1836.1, 0.01, 1e-6) are SINGLE

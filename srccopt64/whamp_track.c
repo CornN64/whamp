@@ -13,6 +13,12 @@
 #include <float.h>
 #include <limits.h>
 
+/* The tracker's own pi.  Spelled locally rather than taken from constants.h
+ * so that the bit-for-bit variants (../srccopt, ../srcc), where each engine
+ * file declares a file-scope `static const double PI`, can compile this file
+ * unchanged.  The value is the 15-digit one constants.h documents. */
+#define TR_PI 3.14159265358979
+
 typedef struct {
     int valid;
     double p, z;
@@ -285,7 +291,7 @@ static double tr_winding(double p, double z, cd center, double radius,
         double phase = 0.0, worst = 0.0;
         int valid = 1;
         for (i = 0; i <= samples; ++i) {
-            double theta = 2.0 * PI * i / samples;
+            double theta = 2.0 * TR_PI * i / samples;
             cd point = center + radius * (cos(theta) + I * sin(theta));
             cd value;
             if (tr_evaluate(p, z, point, 1) != 0) {
@@ -310,8 +316,8 @@ static double tr_winding(double p, double z, cd center, double radius,
         if (!valid)
             return NAN;
         (void)first;
-        winding = nearbyint((phase / (2.0 * PI)) * 2.0) / 2.0;
-        if (worst <= PI / 2.0)
+        winding = nearbyint((phase / (2.0 * TR_PI)) * 2.0) / 2.0;
+        if (worst <= TR_PI / 2.0)
             return winding;
         samples *= 2;
     }
