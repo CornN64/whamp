@@ -1,7 +1,7 @@
 function varargout = whamp_track_plot(Output, varargin)
 %WHAMP_TRACK_PLOT  Dispersion diagram with branch confidence drawn in.
 %   P = WHAMP_TRACK_PLOT(OUTPUT) plots the frequency branch from a
-%   WHAMP_TRACK (or WHAMP_TRACK_V2) result and marks, on the curve
+%   WHAMP_TRACK (or WHAMP_TRACK_STANDALONE_V2) result and marks, on the curve
 %   itself, how much each point can be trusted.  The solver's flags were
 %   previously only countable, not visible: looking at a dispersion diagram it
 %   is impossible to tell a confidently tracked root from one the continuity
@@ -39,7 +39,7 @@ function varargout = whamp_track_plot(Output, varargin)
 %
 %   P = WHAMP_TRACK_PLOT(...) returns a struct of the graphics handles.
 %
-%   Also see: whamp_track.m, whamp_track_v2.m
+%   Also see: whamp_track.m, whamp_track_standalone_v2.m
 
 % ---------------------------------------------------------------- arguments
 opt = struct('Mode', 'flags', 'ShowPredicted', false, 'Frequency', 'f', ...

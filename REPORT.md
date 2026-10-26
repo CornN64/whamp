@@ -2,8 +2,7 @@
 
 AI-assisted work by Walter Puccio, 2026.
 
-This report merges and supersedes five earlier ones — `REPORT`, `REPORT64`,
-`REPORTmatlab`, `REPORTtrack` and `REPORTtrack_V2` — which have been deleted.
+This report merges and supersedes five earlier ones — which have been deleted.
 It records six phases of work on the WHAMP plasma-wave code and the evidence for
 each.
 
@@ -12,10 +11,10 @@ each.
 | Phase | Deliverable | Verified by |
 |---|---|---|
 | 1 | `src/` Fortran 90 → `srcc/` C, byte-for-byte | 67 differential comparisons vs a gfortran oracle |
-| 2 | `srccopt/` (tidied, byte-exact) and `srccopt64/` (all-`double` experiment) | 30-session golden suites + oracle replay |
-| 3 | `srcm/whamp.m` pure-MATLAB port, refactored | 30-case `%.20g` regression + conformance to `srccopt64` |
+| 2 | `srccopt/` (tidied, byte-exact) and `srcc64/` (all-`double` experiment) | 30-session golden suites + oracle replay |
+| 3 | `srcm/whamp.m` pure-MATLAB port, refactored | 30-case `%.20g` regression + conformance to `srcc64` |
 | 4 | `whamp_track` v1 — branch tracking with a trust region | nine adversarial sweep lines vs a step-refined reference |
-| 5 | `whamp_track_v2` — tracking with no hand-tuned scales | same harness, plus winding-number certification |
+| 5 | `whamp_track` — tracking with no hand-tuned scales | same harness, plus winding-number certification |
 | 6 | Tracker + `mexwrap` MEX gateway back-ported to C | `whamp_track_test`, `whamp_track_dump`, MATLAB suite |
 
 Toolchain throughout: `gcc` / `gfortran` 6.3.0 (`C:\MinGW\bin`), MATLAB R2020b,
@@ -93,26 +92,26 @@ and `src/mexwhamp.F` (MATLAB gateway; superseded in phase 6).
 
 ---
 
-## 2. Optimised variants (`srccopt/`, `srccopt64/`)
+## 2. Optimised variants (`srccopt/`, `srcc64/`)
 
 * **`srccopt/`** — dead code removed, the Fortran edit-descriptor emulation
   extracted into `fedit.c/.h`, `whamp.h` slimmed, argument parsing and record
   reading rewritten with named helpers, and `ALLOC1`/`ALLOC2` collapsing 21
   hand-written `free()` calls on error paths into one unwinding sequence.
   **Byte-for-byte identical to `srcc/` on all 30 golden sessions.**
-* **`srccopt64/`** — the all-`double` experiment: every `F32(literal)` became a
+* **`srcc64/`** — the all-`double` experiment: every `F32(literal)` became a
   plain literal, `typin.c`'s four `float` variables (the only single-precision
   variables in the whole Fortran source) became `double`, and constants were
   collected in `constants.h`.
 
 Both build warning-free at `-Wall -Wextra -O2` and at `-Wall -Wextra -Wpedantic`.
 Under the broadest set gcc 6.3 implements, diagnostics fall from 238 (`srcc/`)
-to 82 (`srccopt/`) to 72 (`srccopt64/`); the residue is `-Wfloat-equal` (48,
+to 82 (`srccopt/`) to 72 (`srcc64/`); the residue is `-Wfloat-equal` (48,
 inherent — Fortran compares reals with `==`) and `-Wdouble-promotion` (26,
 deliberate). Silencing them would mean changing behaviour.
 
 Against the authoritative oracle, `srcc/` and `srccopt/` differ on 3 of 25
-sessions (the pre-existing ULP residuals above); `srccopt64/` differs on 18,
+sessions (the pre-existing ULP residuals above); `srcc64/` differs on 18,
 which is the float→double experiment.
 
 ### 2.1 Single precision is load-bearing — a sweep silently loses its endpoint
@@ -122,13 +121,13 @@ For the sweep `p0,.05,.01z.0022f.1`:
 | Build | Points emitted | Last p |
 |---|---|---|
 | `srcc/`, `srccopt/` | 5 | 0.0400000 |
-| `srccopt64/` | **6** | **0.0500000** |
+| `srcc64/` | **6** | **0.0500000** |
 
 The original **drops the requested endpoint**. The loop advances while
 `PLG <= PM2`; with float rounding the accumulator reaches
 `0.049999998882412910` against a bound of `0.049999997019767761` and fails the
 test, while in double it lands exactly on the bound and succeeds. A sweep from 0
-to 0.05 in steps of 0.01 *should* have six points, so `srccopt64` is arguably
+to 0.05 in steps of 0.01 *should* have six points, so `srcc64` is arguably
 more correct — and further from the reference. **Widening `float` to `double`
 changes program behaviour, not just its last digit.**
 
@@ -185,7 +184,7 @@ before use. The energy-output path in `av.c` is **untested in every tree**.
 ### 2.5 Recommendation
 
 Use **`srccopt/`** where output must match the original WHAMP. Treat
-**`srccopt64/`** as an experiment — clean and self-consistent, but not closer to
+**`srcc64/`** as an experiment — clean and self-consistent, but not closer to
 reference behaviour. **Enable `-Wconversion` on any port to a new toolchain**: it
 was the only warning class that caught a real defect, and `-Wall -Wextra` was
 clean both before and after the fix.
@@ -209,7 +208,7 @@ expected error identifiers. After 9 refactor batches the dump is **byte-identica
 to the baseline**, and it stayed so after each individual batch.
 
 Crucially the harness was anchored *outward* first: the pre-refactor code was
-compared against the real `srccopt64` transcripts and **9 of 9 comparable
+compared against the real `srcc64` transcripts and **9 of 9 comparable
 sessions matched**, the closest at **3.2×10⁻¹⁴** relative error. The refactor
 therefore preserves agreement with the reference program, not merely
 self-agreement. `checkcode` went from 7 warnings to 0.
@@ -317,10 +316,10 @@ solver for jumping onto a neighbouring branch is measuring the wrong thing.
 
 ---
 
-## 5. Tracking without hand-tuned scales (`whamp_track_v2`)
+## 5. Tracking without hand-tuned scales (`whamp_track`)
 
 > **Naming.** `whamp_track_test.m` is modular v1 (calls `+whampkit`);
-> `whamp_track.m` is self-contained v1; `whamp_track_v2.m` supersedes both.
+> `whamp_track.m` is self-contained v1; `whamp_track.m` supersedes both.
 
 **Headline: v2 is the first solver in this tree that reports no branch hops *and*
 no unjudgeable points**, at 2.83 s against 3.02 s for self-contained v1 on the
@@ -332,7 +331,7 @@ real cost.
 | `whamp` | 13 | 42 | 19 | 0.75 s |
 | `whamp_track_test` (modular v1) | 0 | 56 | 19 | 7.74 s |
 | `whamp_track` (self-contained v1) | 0 | 56 | 19 | 3.02 s |
-| **`whamp_track_v2`** | **0** | **57** | **0** | **2.83 s** |
+| **`whamp_track`** | **0** | **57** | **0** | **2.83 s** |
 
 ### 5.1 Removing `relFloor` — and the trap in doing it
 
@@ -531,10 +530,10 @@ built MEX.
 The tracker itself is `whamp_track.c` / `whamp_track.h` with shared declarations
 in `comtrack.h`; callers configure the existing `comin` globals as for
 `whamp_engine()`, optionally call `track_options_default()`, then call
-`whamp_track_v2()`. It writes the existing `comoutput` arrays. The original engine
+`whamp_track()`. It writes the existing `comoutput` arrays. The original engine
 entry points are unchanged — callers opt in.
 
-**Ported to all four C trees** — `srccopt64`, `srcc64`, `srccopt`, `srcc` — for
+**Ported to all four C trees** — `srcc64`, `srcc64`, `srccopt`, `srcc` — for
 parity. Two subtleties had to be handled:
 
 * **`PI` collision.** `srcc` and `srccopt` declare file-scope `static const double
@@ -546,16 +545,16 @@ parity. Two subtleties had to be handled:
   `1e-5`. With plain-double constants the tracker and engine computed *different
   dispersion functions* and disagreed about the root. In `srcc/constants.h` and
   `srccopt/constants.h` these are therefore defined via `((double)(float)...)`;
-  the all-double trees keep them unrounded, matching `whamp_track_v2.m`.
+  the all-double trees keep them unrounded, matching `whamp_track.m`.
   `DEBYE_KM` (12405) and `ELECTRON_REST_ENERGY_KEV` (511) are exactly
   representable in single and are written plain in every tree.
 
 **Verification.** `whamp_track_test` checks both 2-D sweep orders, winding
 certification, and exact agreement with the legacy engine's first root; it passes
 in all four trees. `whamp_track_dump` prints each case's arrays at `%.17g` for
-comparison against MATLAB by `srcm/whamp_track_v2_vs_c.m`, whose **14 cases all
+comparison against MATLAB by `srcm/whamp_track_vs_c.m`, whose **14 cases all
 MATCH (worst relative deviation 2.834×10⁻¹²) with every flag matching exactly**.
-Dump output is byte-identical between `srcc64` and `srccopt64`. `srcc` and
+Dump output is byte-identical between `srcc64` and `srcc64`. `srcc` and
 `srccopt` differ on 9 of 14 cases — a pre-existing difference between the two
 bit-for-bit trees, not a tracker issue: `srccopt` applies `F32()` at two sites
 `srcc` does not, one of them a routing threshold in `xsi.c` that selects the
@@ -585,11 +584,11 @@ than guessed from a path. Three pieces:
   compiles and reports `unknown_srcm` — never a wrong answer.
 * **Report.** Every result carries `Output.engine`, and
   `mexwrap('engine')` returns the name without running anything.
-* **Refuse.** `matlab/mexwrap.m` reads `WHAMP_ENGINE` (default `srccopt64`),
+* **Refuse.** `matlab/mexwrap.m` reads `WHAMP_ENGINE` (default `srcc64`),
   loads *only* that directory's MEX, and asks the loaded binary to confirm.
   A mismatch, an unstamped binary, or a missing build is an error naming what
   was asked for, what was found, and where. The earlier shim walked a
-  preference list `{srccopt64, srccopt, srcc64, srcc}` and took the first hit,
+  preference list `{srcc64, srccopt, srcc64, srcc}` and took the first hit,
   which silently substituted a different engine whenever one build went
   missing — that is what this replaces.
 
@@ -660,7 +659,7 @@ everywhere, so the difference is inherited from the fields, not a logic divergen
 8. Wire `whamp_verify` and the golden suites into CI so a MATLAB edit is gated the
    same way a C edit is.
 9. Consider whether four near-duplicate C trees (`srcc`, `srcc64`, `srccopt`,
-   `srccopt64`) are worth their long-term maintenance cost now that the
+   `srcc64`) are worth their long-term maintenance cost now that the
    diagnostic value of the experiment has been extracted.
 
 ---
@@ -671,9 +670,7 @@ everywhere, so the difference is inherited from the fields, not a logic divergen
 whamp/
 ├── src/            ORIGINAL Fortran 90 (read-only reference, 19 files)
 ├── srcc/           C translation, bit-for-bit (F32 emulation, ctof.c)
-├── srccopt/        tidied + optimised, byte-exact with srcc/ (fedit.c)
-├── srcc64/         all-double + tidied; near-identical to srccopt64
-├── srccopt64/      all-double + tidied; the validated tracker/MEX reference
+├── srcc64/         all-double + tidied; the validated tracker/MEX reference
 ├── srcm/           pure MATLAB: whamp.m, whamp_track{,_test,_v2}.m, +whampkit/
 ├── matlab/         MATLAB front end, mexwrap.m shim
 ├── fortran_ref/    gfortran oracle + differential harness
@@ -688,18 +685,18 @@ Each C tree builds with `mingw32-make` (`make` is not on PATH) and exposes
 
 ```powershell
 # C: build a tree and run its tracker self-test
-cd srccopt64 ; C:\MinGW\bin\mingw32-make.exe all whamp_track_test whamp_track_dump
+cd srcc64 ; C:\MinGW\bin\mingw32-make.exe all whamp_track_test whamp_track_dump
 .\whamp_track_test.exe            # exit 0 on success
 
 # C MEX (must be run from inside the tree; make stamps the variant name)
 C:\MinGW\bin\mingw32-make.exe mexwrap
 
-# Tracker vs the MATLAB reference (14 cases; driver path is srccopt64)
-& matlab.exe -batch "cd srcm; addpath(pwd); whamp_track_v2_vs_c"
+# Tracker vs the MATLAB reference (14 cases; driver path is srcc64)
+& matlab.exe -batch "cd srcm; addpath(pwd); whamp_track_vs_c"
 
 # MATLAB regression and conformance
 & matlab.exe -batch "addpath('srcm'); whamp_verify('baseline.txt')"
-& matlab.exe -batch "addpath('srcm'); whamp_vs_repl_golden; whamp_vs_srccopt64"
+& matlab.exe -batch "addpath('srcm'); whamp_vs_repl_golden; whamp_vs_srcc64"
 
 # Golden suites (exit 1 on any difference)
 powershell -ExecutionPolicy Bypass -File tools_golden\run_cases.ps1 `
@@ -722,9 +719,9 @@ assembler, and are not part of the tracked tree.
 **Claimed.** `srccopt/` reproduces `srcc/` byte-for-byte on 30 sessions and the
 documented acceptance test exactly. `srcm/whamp.m` produces byte-identical output
 to its pre-refactor state across 30 cases and 21 fields at full precision, and
-that state matches `srccopt64` on all 9 comparable golden sessions. Over nine
+that state matches `srcc64` on all 9 comparable golden sessions. Over nine
 sweep lines spanning three multi-species plasmas and three perpendicular
-wavenumbers, `whamp_track_v2` records **0 branch hops and 0 points beyond the
+wavenumbers, `whamp_track` records **0 branch hops and 0 points beyond the
 reference's reach** where `whamp.m` records 13 and 19; every accepted root it
 reports is independently certified as a simple root of `D`; it agrees with itself
 across sweep orderings to 3·10⁻¹¹; and it contains no hand-tuned scale. The
@@ -735,10 +732,10 @@ behaviour.
 
 **Not claimed.** That zero hops holds generally — three plasmas and three `kperp`
 values are not a proof, and the *comparison* between solvers still rests on a
-reference that stops at the fold. That `srccopt64` matches the original (it does
+reference that stops at the fold. That `srcc64` matches the original (it does
 not, in two specific documented ways). That the golden suites are complete — §2.3
 and §2.4 are direct evidence that they are not. That the residual oracle
 differences are understood beyond being ULP-level and pre-existing. That the
 MATLAB port is a faithful reference for the Fortran original — it is a faithful
-reference for `srccopt64`. And that anything is fixed for users of the Fortran
+reference for `srcc64`. And that anything is fixed for users of the Fortran
 engine, which still carries the original single-seed defect.

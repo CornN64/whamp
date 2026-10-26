@@ -26,7 +26,7 @@ PlasmaModel.Species = {Electrons};
 
 InputParameters = struct('fstart',fstart,'kperp',[kparstart 0.01 kparend],'kpar',[kparstart 0.01 kparend],'useLog',0); %Whistler mode
 tic
-Output = whamp_track_v2(PlasmaModel,InputParameters);
+Output = whamp_track(PlasmaModel,InputParameters);
 toc
 
 %%

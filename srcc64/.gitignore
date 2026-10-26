@@ -5,10 +5,6 @@ whamp
 whamp.exe
 whamp_engine_test
 whamp_engine_test.exe
-whamp_track_test
-whamp_track_test.exe
-whamp_track_dump
-whamp_track_dump.exe
 *.mexw64
 *.mexa64
 *.mexmaci64

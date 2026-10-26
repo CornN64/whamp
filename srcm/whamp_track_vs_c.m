@@ -1,23 +1,23 @@
-function whamp_track_v2_vs_c(varargin)
-%WHAMP_TRACK_V2_VS_C Compare srcm/whamp_track_v2.m with srccopt64/whamp_track.c.
+function whamp_track_vs_c(varargin)
+%WHAMP_TRACK_VS_C Compare srcm/whamp_track.m with srccopt64/whamp_track.c.
 %   Runs both implementations over the same plasma models and wave-number
 %   grids and reports the largest relative deviation of every output array.
 %   The C side is srccopt64/whamp_track_dump.exe, whose cases are named here.
 %
 %   Usage:
-%       whamp_track_v2_vs_c()            % all cases
-%       whamp_track_v2_vs_c('line_kpar') % one case
+%       whamp_track_vs_c()            % all cases
+%       whamp_track_vs_c('line_kpar') % one case
 %
 %   The MATLAB interface takes density in cm^-3, temperature in eV and B in
 %   nT; the C driver takes engine units directly, so B is rebuilt from XC with
-%   the same 0.0279928 factor whamp_track_v2.m uses.  MATLAB transposes every
+%   the same 0.0279928 factor whamp_track.m uses.  MATLAB transposes every
 %   grid on output (Output.f is [kpar x kperp]) and writes NaN where
 %   flagNoConvergence is set; both are undone here before comparing.
 
 root = fileparts(fileparts(mfilename('fullpath')));
 exe = fullfile(root, 'srccopt64', 'whamp_track_dump.exe');
 if exist(exe, 'file') ~= 2
-    error('whamp_track_v2_vs_c:MissingDriver', ...
+    error('whamp_track_vs_c:MissingDriver', ...
         ['Build the dump driver first: cd srccopt64 && mingw32-make ' ...
          'whamp_track_dump']);
 end
@@ -34,7 +34,7 @@ if nargin >= 1 && ~isempty(varargin{1})
         keep(k) = any(strcmp(cases{k}.name, wanted));
     end
     if ~any(keep)
-        error('whamp_track_v2_vs_c:UnknownCase', 'No case named %s.', wanted);
+        error('whamp_track_vs_c:UnknownCase', 'No case named %s.', wanted);
     end
     cases = cases(keep);
 end
@@ -60,10 +60,10 @@ for k = 1:numel(cases)
         'varyKzFirst',tc.varyKzFirst,'useLog',tc.useLog, ...
         'maxIterations',50);
 
-    M = whamp_track_v2(plasma, ip);
+    M = whamp_track(plasma, ip);
     [status, out] = system(sprintf('"%s" %s', exe, tc.name));
     if status ~= 0
-        error('whamp_track_v2_vs_c:DriverFailed', ...
+        error('whamp_track_vs_c:DriverFailed', ...
             '%s exited with %d:\n%s', tc.name, status, out);
     end
     C = local_parse(out);
@@ -220,7 +220,7 @@ for k = 1:numel(lines)
     end
 end
 if ~isfield(C, 'nk')
-    error('whamp_track_v2_vs_c:BadTranscript', 'no SIZE line in driver output');
+    error('whamp_track_vs_c:BadTranscript', 'no SIZE line in driver output');
 end
 end
 
@@ -477,7 +477,7 @@ rel = [];
 absd = [];
 elemRel = [];
 if ~isequal(size(A), size(B))
-    error('whamp_track_v2_vs_c:SizeMismatch', 'size %s vs %s', ...
+    error('whamp_track_vs_c:SizeMismatch', 'size %s vs %s', ...
         mat2str(size(A)), mat2str(size(B)));
 end
 if nargin < 4 || isempty(scale)

@@ -5,12 +5,9 @@
 #   all                 whamp, libwhamp.a, whamp_engine_test
 #                       and the whamp_track_test regression runner
 #   whamp               interactive WHAMP program
-#   libwhamp.a          engine and tracker library
+#   libwhamp.a          engine library
 #   whamp_engine_test   host program that drives the engine
 #   whamp_track_test    non-interactive tracker regression test
-#   whamp_track_dump   tracker transcript used by ../srcm/whamp_track_v2_vs_c.m
-#   mex                 MATLAB gateway (needs mex on PATH)
-#   mexwrap             MATLAB struct-interface wrapper (needs mex on PATH)
 #   clean
 #
 
@@ -22,7 +19,8 @@ BINDIR  = .
 MEX     = mex
 
 # Name of this engine variant, stamped into mexwrap.mexw64 as Output.engine.
-VARIANT = srcc64
+# This tree is all-double and tidied; srccopt is the bit-for-bit variant.
+VARIANT = srccopt64
 
 CFLAGS  = -c -std=c11 -Wall -Wextra -O2
 
@@ -70,16 +68,25 @@ whamp_track_dump: $(TRACK_DUMP_OBJS)
 libwhamp.a: $(LIB_OBJS)
 	$(AR) $@ $(LIB_OBJS)
 
+# MATLAB gateway (translation of ../src/mexwhamp.F).  Requires MATLAB's mex
+# on PATH and produces mexwhamp.mexa64 / .mexw64 / .mexmaci64 depending on
+# the host.  This is the all-double engine variant; ../srccopt is the variant
+# that reproduces the Fortran reference bit-for-bit.
+mex: libwhamp.a mexwhamp.c
+	$(MEX) -O -R2017b mexwhamp.c libwhamp.a
+
 # Struct-interface wrapper: mexwrap(PlasmaModel, InputParameters) exactly as
 # whamp.m takes them, returning whamp.m's Output structure.  Links the engine
 # in, so the MEX is self-contained; ../matlab/mexwrap.m only locates it.
+# VARIANT is stamped into the binary as Output.engine, so a result can always
+# be traced to the tree that produced it.
 mexwrap: libwhamp.a mexwrap.c
 	$(MEX) -O -R2017b -DWHAMP_VARIANT_NAME=$(VARIANT) mexwrap.c libwhamp.a
 
 clean:
 	rm -f *.o libwhamp.a whamp whamp_engine_test whamp_track_test \
 		whamp_engine_test.exe whamp_track_test.exe whamp.exe \
-		whamp_track_dump.exe \
+		mexwhamp.mexa64 mexwhamp.mexw64 mexwhamp.mexmaci64 \
 		mexwrap.mexa64 mexwrap.mexw64 mexwrap.mexmaci64
 
-.PHONY: all clean mexwrap
+.PHONY: all clean mex mexwrap

@@ -202,9 +202,9 @@ static void save_output(void)
      * index runs far outside the allocated output arrays and corrupts memory
      * (an access violation under MATLAB; silent heap corruption in the
      * Fortran original, whose bounds checking is off by default).  Clamping
-     * leaves every in-range index untouched, so the golden outputs are
-     * unchanged; only the sentinel iteration is redirected to the boundary
-     * cell, exactly as whamp.m records it.
+     * leaves every in-range index untouched, so converged results are
+     * bit-for-bit unchanged; only the sentinel iteration is redirected to the
+     * boundary cell, exactly as whamp.m records it.
      */
     if (indexKperp < 1)
         indexKperp = 1;
