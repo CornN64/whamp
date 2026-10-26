@@ -572,6 +572,36 @@ on the 14 cases, which is why both were invisible to the flag comparison; they
 matter on grids wider than 65 cells and for contours whose phase lands on a
 half-integer.
 
+### 6.1 Which engine a result came from
+
+Four trees build the same gateway, and they are *not* numerically
+interchangeable, so "which one ran" has to be answerable after the fact rather
+than guessed from a path. Three pieces:
+
+* **Stamp.** Each Makefile defines `VARIANT` and passes
+  `-DWHAMP_VARIANT_NAME=$(VARIANT)` when building the MEX. The name is
+  stringified inside `mexwrap.c` rather than quoted on the command line,
+  because `-D` quoting differs between shells. A build without the flag still
+  compiles and reports `unknown_srcm` — never a wrong answer.
+* **Report.** Every result carries `Output.engine`, and
+  `mexwrap('engine')` returns the name without running anything.
+* **Refuse.** `matlab/mexwrap.m` reads `WHAMP_ENGINE` (default `srccopt64`),
+  loads *only* that directory's MEX, and asks the loaded binary to confirm.
+  A mismatch, an unstamped binary, or a missing build is an error naming what
+  was asked for, what was found, and where. The earlier shim walked a
+  preference list `{srccopt64, srccopt, srcc64, srcc}` and took the first hit,
+  which silently substituted a different engine whenever one build went
+  missing — that is what this replaces.
+
+Self-containment was checked rather than assumed: `nm -u` on all four MEX
+files shows zero undefined engine symbols, so each links only the
+`libwhamp.a` built beside it. The risk was never cross-tree linking; it was
+selection.
+
+Switching variants mid-session needs `clear mexwrap`, since MATLAB keeps a
+MEX loaded until it is cleared; the shim reports that as an error rather than
+pretending to switch.
+
 The Poynting flux and `SGP`/`SGZ` need a yardstick other than the array's own
 magnitude — they are differences of nearly cancelling products, where a
 per-cell ratio reads a difference of 1e-17 as a relative error of one. They are
@@ -661,8 +691,8 @@ Each C tree builds with `mingw32-make` (`make` is not on PATH) and exposes
 cd srccopt64 ; C:\MinGW\bin\mingw32-make.exe all whamp_track_test whamp_track_dump
 .\whamp_track_test.exe            # exit 0 on success
 
-# C MEX (must be run from inside the tree)
-& 'C:\Program Files\Polyspace\R2020b\bin\mex.bat' -O -R2017b mexwrap.c libwhamp.a
+# C MEX (must be run from inside the tree; make stamps the variant name)
+C:\MinGW\bin\mingw32-make.exe mexwrap
 
 # Tracker vs the MATLAB reference (14 cases; driver path is srccopt64)
 & matlab.exe -batch "cd srcm; addpath(pwd); whamp_track_v2_vs_c"

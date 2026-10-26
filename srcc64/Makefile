@@ -21,6 +21,9 @@ BINDIR  = .
 # MATLAB's MEX compiler (must be on PATH; override with MEX=/path/to/mex).
 MEX     = mex
 
+# Name of this engine variant, stamped into mexwrap.mexw64 as Output.engine.
+VARIANT = srcc64
+
 CFLAGS  = -c -std=c11 -Wall -Wextra -O2
 
 # Numerical kernel shared by both executables.
@@ -71,7 +74,7 @@ libwhamp.a: $(LIB_OBJS)
 # whamp.m takes them, returning whamp.m's Output structure.  Links the engine
 # in, so the MEX is self-contained; ../matlab/mexwrap.m only locates it.
 mexwrap: libwhamp.a mexwrap.c
-	$(MEX) -O -R2017b mexwrap.c libwhamp.a
+	$(MEX) -O -R2017b -DWHAMP_VARIANT_NAME=$(VARIANT) mexwrap.c libwhamp.a
 
 clean:
 	rm -f *.o libwhamp.a whamp whamp_engine_test whamp_track_test \

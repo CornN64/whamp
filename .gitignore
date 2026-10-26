@@ -13,3 +13,5 @@ src/whamptest
 src/whamp_engine_test
 src/mexwhamp*
 src/libwhamp*
+
+*.mexw64.stale

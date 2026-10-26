@@ -18,6 +18,10 @@ BINDIR  = .
 # MATLAB's MEX compiler (must be on PATH; override with MEX=/path/to/mex).
 MEX     = mex
 
+# Name of this engine variant, stamped into mexwrap.mexw64 as Output.engine.
+# This tree is all-double and tidied; srccopt is the bit-for-bit variant.
+VARIANT = srccopt64
+
 CFLAGS  = -c -std=c11 -Wall -Wextra -O2
 
 # Numerical kernel shared by both executables.
@@ -74,8 +78,10 @@ mex: libwhamp.a mexwhamp.c
 # Struct-interface wrapper: mexwrap(PlasmaModel, InputParameters) exactly as
 # whamp.m takes them, returning whamp.m's Output structure.  Links the engine
 # in, so the MEX is self-contained; ../matlab/mexwrap.m only locates it.
+# VARIANT is stamped into the binary as Output.engine, so a result can always
+# be traced to the tree that produced it.
 mexwrap: libwhamp.a mexwrap.c
-	$(MEX) -O -R2017b mexwrap.c libwhamp.a
+	$(MEX) -O -R2017b -DWHAMP_VARIANT_NAME=$(VARIANT) mexwrap.c libwhamp.a
 
 clean:
 	rm -f *.o libwhamp.a whamp whamp_engine_test whamp_track_test \

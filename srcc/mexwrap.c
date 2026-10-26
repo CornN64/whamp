@@ -65,6 +65,22 @@
 
 #define NSLOT 10 /* the engine keeps ten plasma component slots */
 
+/* Which engine tree this binary was built from.  The Makefile passes it with
+ * -D so the MEX can name its own provenance, and so a caller can prove the
+ * binary in front of them came from the directory they intended: this MEX
+ * links only the libwhamp.a built next to it, and nothing reaches into a
+ * sibling tree.  A bare `mex mexwrap.c libwhamp.a` without the flag still
+ * builds, and reports "unknown_srcm" rather than a wrong answer.
+ *
+ * The variant name is given unquoted on the command line and stringified
+ * here, because the quoting rules for a -D differ between shells. */
+#ifndef WHAMP_VARIANT_NAME
+#define WHAMP_VARIANT_NAME unknown_srcm
+#endif
+#define WHAMP_STRINGIFY_(x) #x
+#define WHAMP_STRINGIFY(x) WHAMP_STRINGIFY_(x)
+#define WHAMP_ENGINE_VARIANT WHAMP_STRINGIFY(WHAMP_VARIANT_NAME)
+
 /* Refuse grids large enough to exhaust memory before the engine can report
  * anything; a runaway allocation kills MATLAB rather than the MEX. */
 #define MAX_AXIS_POINTS 1e6
@@ -79,8 +95,9 @@
 #define NTRACKEXTRA 5 /* whamp_track_v2.m's five tracking arrays */
 
 /* Output structure size: the four leading fields and the results are always
- * there; the tracker adds the five tracking arrays and `diagnostics`. */
-#define NOUTFIELDS_ENGINE (4 + NRESULT + NFLAGS)
+ * there; the tracker adds the five tracking arrays and `diagnostics`, and
+ * both end with `engine`, which names the tree this binary was built from. */
+#define NOUTFIELDS_ENGINE (4 + NRESULT + NFLAGS + 1)
 #define NOUTFIELDS_TRACK (NOUTFIELDS_ENGINE + NTRACKEXTRA + 1)
 
 typedef struct {
@@ -629,6 +646,21 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
     static const double defaultKperp[3] = {0.0, 0.0, 10.0};
     static const double defaultKpar[3] = {0.0022, 0.0022, 10.0};
 
+    /* mexwrap('engine') reports which tree this binary was built from,
+     * without solving anything.  The shim uses it to confirm that the MEX it
+     * is about to hand the caller's data to is the one the caller asked for,
+     * rather than a stale copy of another variant further along the path. */
+    if (nrhs == 1 && mxIsChar(prhs[0])) {
+        char request[16];
+        if (mxGetString(prhs[0], request, sizeof(request)) == 0 &&
+            strcmp(request, "engine") == 0) {
+            if (nlhs < 1)
+                return;
+            plhs[0] = mxCreateString(WHAMP_ENGINE_VARIANT);
+            return;
+        }
+    }
+
     if (nrhs < 2 || nrhs > 3)
         mexErrMsgIdAndTxt("mexwrap:invalidInput",
                           "mexwrap takes a PlasmaModel, an InputParameters "
@@ -801,6 +833,9 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
         names[10 + NRESULT] = "flagCertUnknown";
         names[11 + NRESULT] = "predicted";
         names[12 + NRESULT] = "diagnostics";
+        names[13 + NRESULT] = "engine";
+    } else {
+        names[7 + NRESULT] = "engine";
     }
 
     out = mxCreateStructMatrix(1, 1,
@@ -829,6 +864,11 @@ void mexFunction(int nlhs, mxArray *plhs[], int nrhs, const mxArray *prhs[])
                      push_transposed_int(flagTooHeavilyDampedOUT, kp, kz));
     mxSetField(out, 0, "flagNoConvergence",
                      push_transposed_int(flagNoConvergenceOUT, kp, kz));
+
+    /* Provenance: which tree built this binary.  Because the MEX links only
+     * the libwhamp.a in its own directory, this field identifies the whole
+     * engine and tracker the results came from. */
+    mxSetField(out, 0, "engine", mxCreateString(WHAMP_ENGINE_VARIANT));
 
     if (useTracker) {
         /* whamp_track_v2.m's five tracking arrays.  Unlike the result fields
