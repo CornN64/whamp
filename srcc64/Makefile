@@ -19,8 +19,8 @@ BINDIR  = .
 MEX     = mex
 
 # Name of this engine variant, stamped into mexwrap.mexw64 as Output.engine.
-# This tree is all-double and tidied; srccopt is the bit-for-bit variant.
-VARIANT = srccopt64
+# This tree is all-double and tidied; ../srcc is the bit-for-bit variant.
+VARIANT = srcc64
 
 CFLAGS  = -c -std=c11 -Wall -Wextra -O2
 
@@ -70,14 +70,14 @@ libwhamp.a: $(LIB_OBJS)
 
 # MATLAB gateway (translation of ../src/mexwhamp.F).  Requires MATLAB's mex
 # on PATH and produces mexwhamp.mexa64 / .mexw64 / .mexmaci64 depending on
-# the host.  This is the all-double engine variant; ../srccopt is the variant
+# the host.  This is the all-double engine variant; ../srcc is the variant
 # that reproduces the Fortran reference bit-for-bit.
 mex: libwhamp.a mexwhamp.c
 	$(MEX) -O -R2017b mexwhamp.c libwhamp.a
 
 # Struct-interface wrapper: mexwrap(PlasmaModel, InputParameters) exactly as
 # whamp.m takes them, returning whamp.m's Output structure.  Links the engine
-# in, so the MEX is self-contained; ../matlab/mexwrap.m only locates it.
+# in, so the MEX is self-contained; ../srcm/mexwrap.m only locates it.
 # VARIANT is stamped into the binary as Output.engine, so a result can always
 # be traced to the tree that produced it.
 mexwrap: libwhamp.a mexwrap.c

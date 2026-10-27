@@ -1,11 +1,12 @@
 # Golden-output harness for the WHAMP C translation.
 #
 # Runs a set of scripted terminal sessions against a WHAMP C executable
-# (the original srcc build or the srccopt build) and stores/compares the
-# captured stdout.
+# (the bit-for-bit srcc build or the all-double srcc64 build) and
+# stores/compares the captured stdout.
 #
-#   .\run_cases.ps1 -Exe ..\srcc\whamp.exe     -OutDir golden
-#   .\run_cases.ps1 -Exe ..\srccopt\whamp.exe  -OutDir actual -CompareDir golden
+#   .\run_cases.ps1 -Exe ..\srcc\whamp.exe   -OutDir golden
+#   .\run_cases.ps1 -Exe ..\srcc\whamp.exe   -OutDir actual -CompareDir golden
+#   .\run_cases.ps1 -Exe ..\srcc64\whamp.exe -OutDir actual64 -CompareDir golden64
 #
 # cases.json entries:
 #   name    - case id (output file name)

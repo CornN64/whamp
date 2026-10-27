@@ -1,8 +1,8 @@
 function whamp_track_vs_c(varargin)
-%WHAMP_TRACK_VS_C Compare srcm/whamp_track.m with srccopt64/whamp_track.c.
+%WHAMP_TRACK_VS_C Compare srcm/whamp_track.m with srcc64/whamp_track.c.
 %   Runs both implementations over the same plasma models and wave-number
 %   grids and reports the largest relative deviation of every output array.
-%   The C side is srccopt64/whamp_track_dump.exe, whose cases are named here.
+%   The C side is srcc64/whamp_track_dump.exe, whose cases are named here.
 %
 %   Usage:
 %       whamp_track_vs_c()            % all cases
@@ -15,10 +15,10 @@ function whamp_track_vs_c(varargin)
 %   flagNoConvergence is set; both are undone here before comparing.
 
 root = fileparts(fileparts(mfilename('fullpath')));
-exe = fullfile(root, 'srccopt64', 'whamp_track_dump.exe');
+exe = fullfile(root, 'srcc64', 'whamp_track_dump.exe');
 if exist(exe, 'file') ~= 2
     error('whamp_track_vs_c:MissingDriver', ...
-        ['Build the dump driver first: cd srccopt64 && mingw32-make ' ...
+        ['Build the dump driver first: cd srcc64 && mingw32-make ' ...
          'whamp_track_dump']);
 end
 
@@ -110,7 +110,7 @@ end
 % ------------------------------------------------------------------- cases
 
 function cases = local_cases()
-%CASES Mirrors the CASES table in srccopt64/whamp_track_dump.c.
+%CASES Mirrors the CASES table in srcc64/whamp_track_dump.c.
 %   kperp/kpar are [start step stop] as the MATLAB interface wants them.
 ex1 = {struct('m',16,'n',1,'t',10,'a',5,'b',0,'d',1,'vd',1), ...
        struct('m',0, 'n',1,'t',1, 'a',1,'b',0,'d',1,'vd',0)};

@@ -24,7 +24,7 @@ void RASY(cd Y, double AL, cd *RC)
 #define RC22 RC[3]
 
     Y2 = Y * Y;
-    COT = cos(PI * Y) / sin(PI * Y);
+    COT = ccos(PI * Y) / csin(PI * Y);
     /*                  1.E99 IS TOO BIG FOR S/370 HARDWARE. SET TO LARGEST */
     /*                  POSSIBLE FOR IBM MACHINES */
     /*     C=1.E99 */

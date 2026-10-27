@@ -39,11 +39,10 @@
  * which links libwhamp.a with mexwhamp.c into mexwhamp.mex<platform>.  Copy
  * or move the result next to matlab/+whamp/run.m, i.e. into matlab/+whamp/.
  *
- * The engine interface (comin.h, comoutput.h) is identical across srcc/,
- * srcc64/ and srccopt64/, so this file drops into any of them unchanged.
- * srccopt/ is the natural home because it reproduces the Fortran results
- * bit-for-bit; see ../REPORT.md, section 2.  The newer mexwrap.c is the
- * recommended gateway and is built in all four C trees.
+ * The engine interface (comin.h, comoutput.h) is identical across srcc/ and
+ * srcc64/, so this file drops into either unchanged.  ../srcc is the natural
+ * home when byte-exact Fortran results matter; see ../REPORT.md, section 2.
+ * The newer mexwrap.c is the recommended gateway and is built in both trees.
  */
 #include <string.h>
 

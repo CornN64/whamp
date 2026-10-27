@@ -14,9 +14,9 @@
 #include <limits.h>
 
 /* The tracker's own pi.  Spelled locally rather than taken from constants.h
- * so that the bit-for-bit variants (../srccopt, ../srcc), where each engine
- * file declares a file-scope `static const double PI`, can compile this file
- * unchanged.  The value is the 15-digit one constants.h documents. */
+ * so that the bit-for-bit tree, where each engine file declares a file-scope
+ * `static const double PI`, can compile this file unchanged.  The value is
+ * the 15-digit one constants.h documents. */
 #define TR_PI 3.14159265358979
 
 typedef struct {

@@ -11,24 +11,26 @@ function varargout = mexwrap(varargin)
 %   tree.  This file only locates the MEX and puts its directory ahead of this
 %   one on the MATLAB path, so pointing MATLAB at the repository is enough:
 %
-%       addpath(fullfile(whampRoot, 'matlab'))
+%       addpath(fullfile(whampRoot, 'srcm'))
 %       Output = mexwrap(PlasmaModel, InputParameters)
 %
-%   ENGINE VARIANTS.  mexwrap.c and the engine live in four sibling
+%   Do not copy a built mexwrap.mex* into this directory: a MEX beside this
+%   file takes precedence over it, so the variant checks below would never
+%   run.  Build it in the engine directory and let this file find it.
+%
+%   ENGINE VARIANTS.  mexwrap.c and the engine live in two sibling
 %   directories, and they differ numerically, so which one runs matters:
 %
-%       srccopt64   all-double, tidied  (default; matches whamp_track_v2.m)
-%       srcc64      all-double, unmodified source
-%       srccopt     bit-for-bit against the Fortran reference
-%       srcc        bit-for-bit, unmodified source
+%       srcc64   all-double, tidied  (default; matches whamp_track.m)
+%       srcc     bit-for-bit against the Fortran reference
 %
-%   Select one with the WHAMP_ENGINE environment variable; srccopt64 is used
+%   Select one with the WHAMP_ENGINE environment variable; srcc64 is used
 %   when it is unset.  The choice is never silently overridden: if the selected
 %   variant has not been built, or if the binary found is not that variant,
 %   MEXWRAP errors instead of quietly running a different engine.
 %
-%       setenv('WHAMP_ENGINE', 'srccopt')     % or set WHAMP_ENGINE before
-%                                             % starting MATLAB
+%       setenv('WHAMP_ENGINE', 'srcc')      % or set WHAMP_ENGINE before
+%                                           % starting MATLAB
 %
 %   ENGINE = MEXWRAP('engine') returns the name of the variant in use without
 %   running anything.  Each binary stamps its own name in at compile time and
@@ -37,14 +39,14 @@ function varargout = mexwrap(varargin)
 %
 %   Build the MEX first, from the engine directory, with MATLAB's mex on PATH:
 %
-%       cd <repository>/srccopt64
+%       cd <repository>/srcc64
 %       make mexwrap
 %
 %   Switching variants within a session needs CLEAR MEXWRAP first, because
 %   MATLAB keeps a MEX loaded until it is cleared.
 %
 %   See ../REPORT.md, section 2 for the C/Fortran comparison, and section 6
-%   for what distinguishes the four trees.
+%   for what distinguishes the two trees.
 %
 %   See also WHAMP, WHAMP/RUN.
 
@@ -106,12 +108,12 @@ end
 
 function variant = requested_variant()
 %REQUESTED_VARIANT The variant the caller asked for.
-%   WHAMP_ENGINE is the switch.  srccopt64 is the default because it is the
-%   all-double engine that whamp_track_v2.m and the published comparison
+%   WHAMP_ENGINE is the switch.  srcc64 is the default because it is the
+%   all-double engine that whamp_track.m and the published comparison
 %   were built against.
 variant = getenv('WHAMP_ENGINE');
 if isempty(variant)
-    variant = 'srccopt64';
+    variant = 'srcc64';
 elseif ~any(strcmp(variant, known_variants()))
     error('mexwrap:UnknownVariant', ...
         ['WHAMP_ENGINE is "%s", which is not an engine variant.\n' ...
@@ -120,7 +122,7 @@ end
 end
 
 function variants = known_variants()
-variants = {'srccopt64', 'srcc64', 'srccopt', 'srcc'};
+variants = {'srcc64', 'srcc'};
 end
 
 function dirName = engine_directory()

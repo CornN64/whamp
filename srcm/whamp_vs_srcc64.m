@@ -1,5 +1,5 @@
-function whamp_vs_srccopt64()
-%WHAMP_VS_SRCCOPT64 Compare whamp.m against the srccopt64 engine golden output.
+function whamp_vs_srcc64()
+%WHAMP_VS_SRCC64 Compare whamp.m against the srcc64 engine golden output.
 %   Parses the "fOUT=" lines from tools_golden/golden64/engine_*.txt and
 %   compares them with the frequencies whamp.m computes for the same
 %   settings.  Reports the largest relative deviation per case.

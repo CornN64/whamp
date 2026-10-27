@@ -22,8 +22,8 @@
  * DEBYE_KM and ELECTRON_REST_ENERGY_KEV are exactly representable in single and
  * are written plain, matching how the engine writes them.
  *
- * The all-double variants (../srcc64, ../srccopt64) keep the same macros
- * unrounded, which is what ../srcm/whamp_track_v2.m uses.
+ * The all-double tree ../srcc64 keeps the same macros unrounded, which is
+ * what ../srcm/whamp_track.m uses.
  *
  * Include this header through whamp.h; do not include it directly.
  */

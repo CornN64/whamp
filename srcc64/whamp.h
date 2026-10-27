@@ -2,9 +2,9 @@
  * whamp.h -- shared definitions for the C translation of the WHAMP
  * Fortran sources in ../src.
  *
- * THIS IS THE ALL-DOUBLE VARIANT (srccopt64).
+ * THIS IS THE ALL-DOUBLE VARIANT (srcc64).
  *
- * The reference translation (../srccopt) reproduces gfortran bit-for-bit,
+ * The reference translation (../srcc) reproduces gfortran bit-for-bit,
  * which requires emulating Fortran's single-precision (`real`) entities:
  * the unsuffixed literals and the `real` locals of typin.f90.  That
  * emulation is done with the F32() macro and C `float` variables.
@@ -13,7 +13,7 @@
  * `double`, so no F32() macro and no `float` variables exist.  The
  * numerical results therefore differ slightly from gfortran (typically in
  * the 6th-8th significant digit of printed frequencies and in the tiny
- * imaginary parts).  Use ../srccopt when byte-exact output matters; use
+ * imaginary parts).  Use ../srcc when byte-exact output matters; use
  * this variant when uniform double precision matters more.
  *
  * Conventions used throughout the translation:

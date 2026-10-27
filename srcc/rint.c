@@ -68,7 +68,7 @@ void RINT(cd YY, double AL, cd *RC)
     YR = creal(Y);
     /* Fortran: UL = PI - REAL(2.8d0*Y/(36.d0 + Y)) : real part of the complex expr */
     UL = PI - creal(2.8 * Y / (36. + Y));
-    COT = cos(PI * Y) / sin(PI * Y);
+    COT = ccos(PI * Y) / csin(PI * Y);
     Dv = PI * (1. + COT * COT);
     C = YR / AL;
     XO = log(C + sqrt(1. + C * C));
@@ -101,7 +101,7 @@ void RINT(cd YY, double AL, cd *RC)
         Xloc = XO / 2. * (1. + A[i - 1]);
         Z = exp(Xloc);
         C = (Z + 1. / Z) / 2. - 1.;
-        Pv = exp(AL * C - Y * Xloc);
+        Pv = cexp(AL * C - Y * Xloc);
         RC11 = RC11 + W[i - 1] * (UL * R + XO * Pv);
         RC21 = RC21 - W[i - 1] * (UL * RY + XO * Xloc * Pv);
         RC12 = RC12 + W[i - 1] * (UL * RP + XO * AL * C * Pv);
